@@ -56,6 +56,10 @@ async def itsm_subpath_middleware(request: Request, call_next):
     elif path.startswith("/itsm/"):
         request.scope["path"] = path[len("/itsm"):]
     response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if path.endswith(".js") or path.endswith(".html") or path in ("", "/", "/itsm", "/itsm/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
