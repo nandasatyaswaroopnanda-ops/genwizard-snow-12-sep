@@ -10,7 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 app \
-    && useradd --uid 10001 --gid app --create-home --home-dir /app app
+    && useradd --uid 10001 --gid app --create-home --home-dir /app app \
+    && mkdir -p /app/uploads \
+    && chown -R app:app /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \

@@ -21,6 +21,32 @@ echo "==========================================================================
 echo "    GENWIZARD ITSM — EXISTING APPLICATION STACK ONBOARDING & INSTALLER"
 echo "================================================================================"
 
+# Check Docker accessibility and handle socket permissions if needed
+if command -v docker >/dev/null 2>&1; then
+  if ! docker ps >/dev/null 2>&1; then
+    if docker ps 2>&1 | grep -iq "permission denied"; then
+      if command -v sudo >/dev/null 2>&1; then
+        echo "==> Note: Docker socket requires elevated privileges. Using 'sudo docker'..."
+        docker() { sudo docker "$@"; }
+      fi
+    fi
+  fi
+fi
+
+# Port collision avoidance: if port 8000 is occupied by another service on host, switch to alternate port
+if command -v lsof >/dev/null 2>&1 && lsof -i:"${ITSM_HOST_PORT}" >/dev/null 2>&1; then
+  if ! docker ps --filter "name=nexus-itsm-core" --format '{{.Names}}' 2>/dev/null | grep -q "nexus-itsm-core"; then
+    echo "(!) Port ${ITSM_HOST_PORT} is in use on host. Looking for available alternate port..."
+    for alt in 8002 8003 8004 8081 8085; do
+      if ! lsof -i:"$alt" >/dev/null 2>&1; then
+        ITSM_HOST_PORT="$alt"
+        echo "  -> Using open port: ${ITSM_HOST_PORT}"
+        break
+      fi
+    done
+  fi
+fi
+
 # 1. Auto-detect Existing Application Stack Containers & Port
 EXISTING_CONTAINERS=""
 if command -v docker >/dev/null 2>&1; then
@@ -152,6 +178,23 @@ export MONGO_USERNAME="${MONGO_USERNAME:-}"
 export MONGO_HOST="${MONGO_HOST:-}"
 echo "==> Using verified Docker network: '${DOCKER_NETWORK}'"
 
+# Persist environment settings to .env for seamless manual docker compose usage
+cat <<EOF > "$APP_DIR/.env"
+EXISTING_DOCKER_NETWORK=${DOCKER_NETWORK}
+ITSM_HOST_PORT=${ITSM_HOST_PORT}
+MONGO_DATABASE=${MONGO_DATABASE}
+IDENTITY_SERVICE_URL=${IDENTITY_URL}
+CONSUL_HTTP_ADDR=${CONSUL_ADDR}
+CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
+ITSM_BOOTSTRAP_ADMIN_USERNAME=admin
+ITSM_BOOTSTRAP_ADMIN_PASSWORD=${ITSM_BOOTSTRAP_ADMIN_PASSWORD:-}
+MONGO_PASSWORD=${MONGO_PASSWORD:-}
+MONGO_USERNAME=${MONGO_USERNAME:-}
+MONGO_HOST=${MONGO_HOST:-}
+KM_API_TOKEN=${KM_API_TOKEN:-local_demo_token}
+EOF
+chmod 600 "$APP_DIR/.env" 2>/dev/null || true
+
 # 3. Load Offline Pre-Built Docker Image (if provided)
 if [[ -f "$APP_DIR/nexus-itsm-core-image.tar.gz" ]]; then
   echo "==> Found offline pre-built Docker image archive. Loading into Docker daemon..."
@@ -217,11 +260,19 @@ fi
 echo "==> Verifying container health on port ${ITSM_HOST_PORT}..."
 sleep 2
 RETRY=0
-MAX_RETRIES=15
+MAX_RETRIES=30
 while [[ $RETRY -lt $MAX_RETRIES ]]; do
-  if docker ps --filter "name=nexus-itsm-core" --filter "status=running" --format '{{.Names}}' | grep -q "nexus-itsm-core"; then
-    echo "  ✓ nexus-itsm-core container is running."
-    break
+  if docker ps --filter "name=nexus-itsm-core" --filter "status=running" --format '{{.Names}}' 2>/dev/null | grep -q "nexus-itsm-core"; then
+    if command -v curl >/dev/null 2>&1 && curl -sf "http://localhost:${ITSM_HOST_PORT}/health" >/dev/null 2>&1; then
+      echo "  ✓ Container is running and health check passed: http://localhost:${ITSM_HOST_PORT}/health returned 200 OK."
+      break
+    elif docker exec nexus-itsm-core curl -sf "http://localhost:8000/health" >/dev/null 2>&1; then
+      echo "  ✓ Container is running and internal health check passed: 200 OK."
+      break
+    else
+      echo "  ✓ nexus-itsm-core container is running."
+      break
+    fi
   fi
   sleep 2
   RETRY=$((RETRY + 1))
