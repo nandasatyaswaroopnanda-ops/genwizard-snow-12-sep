@@ -384,10 +384,29 @@ def sync_via_mongo(admin_user: str = "admin"):
             if mongo_client is not None:
                 try:
                     all_dbs = mongo_client.list_database_names()
-                    for im_candidate_db in ["identity_management", "im_db", "im", "atr"]:
-                        if im_candidate_db in all_dbs:
-                            ext_im_db = mongo_client[im_candidate_db]
-                            for coll_name in ["custom_groups", "groups"]:
+                    im_dbs_to_seed = []
+                    for d_name in all_dbs:
+                        if d_name in ["admin", "config", "local", "nexus_itsm"]:
+                            continue
+                        test_db = mongo_client[d_name]
+                        colls = test_db.list_collection_names()
+                        has_im_sig = any(
+                            c.lower() in ["adgroup", "useridentityprovidergroups", "mongobeelock", "jwtpublickey", "dbchnagelog", "dbchangelog"]
+                            for c in colls
+                        ) or ("group" in colls and "user" in colls)
+                        if has_im_sig:
+                            im_dbs_to_seed.append(d_name)
+
+                    if not im_dbs_to_seed:
+                        im_dbs_to_seed = [d for d in ["identity_management", "identity-management", "im_db", "im", "aaam", "aaam-atr-v3", "atr"] if d in all_dbs]
+
+                    for im_db_name in im_dbs_to_seed:
+                        ext_im_db = mongo_client[im_db_name]
+                        existing_colls = ext_im_db.list_collection_names()
+
+                        # 1. Seed into group collections ('group', 'groups', 'custom_groups')
+                        for coll_name in ["group", "groups", "custom_groups"]:
+                            if coll_name in existing_colls or coll_name == "group":
                                 for g in REQUIRED_GROUPS:
                                     existing_doc = ext_im_db[coll_name].find_one({"name": g["name"]})
                                     if not existing_doc:
@@ -397,12 +416,48 @@ def sync_via_mongo(admin_user: str = "admin"):
                                             "permissions": g["permissions"],
                                             "active": True
                                         })
-                                        logger.info("Direct Mongo: seeded '%s' into %s.%s", g["name"], im_candidate_db, coll_name)
+                                        logger.info("Direct Mongo: seeded '%s' into %s.%s", g["name"], im_db_name, coll_name)
                                     else:
                                         ext_im_db[coll_name].update_one(
                                             {"_id": existing_doc["_id"]},
                                             {"$set": {"permissions": g["permissions"], "description": g["description"], "active": True}}
                                         )
+
+                        # 2. Attach itsm_admin to existing admin in 'user' / 'users'
+                        for u_coll in ["user", "users"]:
+                            if u_coll in existing_colls:
+                                admin_doc = ext_im_db[u_coll].find_one({"$or": [{"username": admin_user}, {"role": "admin"}, {"role": "administrator"}]})
+                                if admin_doc:
+                                    u_groups = admin_doc.get("custom_groups") or admin_doc.get("groups") or []
+                                    if not isinstance(u_groups, list):
+                                        u_groups = [u_groups]
+                                    if "itsm_admin" not in u_groups:
+                                        u_groups.append("itsm_admin")
+                                    ext_im_db[u_coll].update_one(
+                                        {"_id": admin_doc["_id"]},
+                                        {"$set": {"custom_groups": u_groups, "groups": u_groups, "role": "itsm_admin"}}
+                                    )
+                                    logger.info("Direct Mongo: attached 'itsm_admin' to admin in %s.%s", im_db_name, u_coll)
+
+                        # 3. Upsert into 'permission' / 'permissions' catalog
+                        for p_coll in ["permission", "permissions"]:
+                            if p_coll in existing_colls or p_coll == "permission":
+                                for perm in [
+                                    {"code": "ticket_create", "name": "ticket_create", "category": "Tickets", "description": "Create tickets"},
+                                    {"code": "ticket_read", "name": "ticket_read", "category": "Tickets", "description": "Read tickets"},
+                                    {"code": "ticket_read_own", "name": "ticket_read_own", "category": "Tickets", "description": "Read own tickets"},
+                                    {"code": "ticket_update", "name": "ticket_update", "category": "Tickets", "description": "Update tickets"},
+                                    {"code": "ticket_assign", "name": "ticket_assign", "category": "Tickets", "description": "Assign tickets"},
+                                    {"code": "ticket_resolve", "name": "ticket_resolve", "category": "Tickets", "description": "Resolve tickets"},
+                                    {"code": "admin_all", "name": "admin_all", "category": "Administration", "description": "Full Admin"},
+                                    {"code": "applications_read", "name": "applications_read", "category": "Administration", "description": "Read Applications"},
+                                    {"code": "projects_read", "name": "projects_read", "category": "Administration", "description": "Read Projects"},
+                                ]:
+                                    ext_im_db[p_coll].update_one(
+                                        {"$or": [{"code": perm["code"]}, {"name": perm["code"]}]},
+                                        {"$set": perm},
+                                        upsert=True
+                                    )
                 except Exception as _ext_db_err:
                     logger.debug("External IM database check skipped: %s", _ext_db_err)
         except Exception as _e:
