@@ -234,6 +234,7 @@ ITSM_BOOTSTRAP_ADMIN_PASSWORD=${ITSM_BOOTSTRAP_ADMIN_PASSWORD:-}
 MONGO_PASSWORD=${MONGO_PASSWORD:-}
 MONGO_USERNAME=${MONGO_USERNAME:-}
 MONGO_HOST=${MONGO_HOST:-}
+SEED_DEMO_DATA=false
 KM_API_TOKEN=${KM_API_TOKEN:-local_demo_token}
 EOF
 chmod 600 "$APP_DIR/.env" 2>/dev/null || true
@@ -294,6 +295,7 @@ if [[ "$COMPOSE_OK" != "true" ]]; then
     -e MONGO_PASSWORD="${MONGO_PASSWORD:-}" \
     -e MONGO_USERNAME="${MONGO_USERNAME:-}" \
     -e MONGO_HOST="${MONGO_HOST:-}" \
+    -e SEED_DEMO_DATA="false" \
     -e KM_API_TOKEN="local_demo_token" \
     nexus-itsm-core:latest
   echo "✓ Direct docker run on network '${DOCKER_NETWORK}' succeeded."

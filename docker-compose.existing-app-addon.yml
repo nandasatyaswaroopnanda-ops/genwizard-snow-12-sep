@@ -51,6 +51,9 @@ services:
       - MONGO_USERNAME=${MONGO_USERNAME:-}
       - MONGO_HOST=${MONGO_HOST:-atr-mongo}
       
+      # Production clean state (strictly 0 test data, 0 test incidents, 0 test users)
+      - SEED_DEMO_DATA=false
+      
       # AI Copilot / Knowledge Engine token
       - KM_API_TOKEN=${KM_API_TOKEN:-local_demo_token}
     extra_hosts:
