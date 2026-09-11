@@ -109,6 +109,14 @@ if [[ -n "$CONSUL_CONTAINER" ]]; then
       export MONGO_HOST="$DIRECT_MONGO_HOST"
     fi
   fi
+
+  DIRECT_IM_DB=$(docker exec "$CONSUL_CONTAINER" consul kv get configuration/aaam-atr-v3-gateway/spring.data.mongodb.database 2>/dev/null || \
+                 docker exec "$CONSUL_CONTAINER" consul kv get configuration/aaam-atr-v3/identity-management/spring.data.mongodb.database 2>/dev/null || \
+                 docker exec "$CONSUL_CONTAINER" consul kv get configuration/identity-management/spring.data.mongodb.database 2>/dev/null || true)
+  if [[ -n "$DIRECT_IM_DB" ]]; then
+    export IM_MONGO_DATABASE="$DIRECT_IM_DB"
+    echo "  ✓ Extracted Identity Management database name from Consul: '${IM_MONGO_DATABASE}'"
+  fi
 fi
 
 # Auto-detect MongoDB container (strictly 'atr-mongo', never 'mlcore-mongo') & interact directly via Docker CLI
@@ -209,6 +217,7 @@ export ITSM_BOOTSTRAP_ADMIN_PASSWORD="${ITSM_BOOTSTRAP_ADMIN_PASSWORD:-}"
 export MONGO_PASSWORD="${MONGO_PASSWORD:-}"
 export MONGO_USERNAME="${MONGO_USERNAME:-}"
 export MONGO_HOST="${MONGO_HOST:-}"
+export IM_MONGO_DATABASE="${IM_MONGO_DATABASE:-}"
 echo "==> Using verified Docker network: '${DOCKER_NETWORK}'"
 
 # Persist environment settings to .env for seamless manual docker compose usage
@@ -216,6 +225,7 @@ cat <<EOF > "$APP_DIR/.env"
 EXISTING_DOCKER_NETWORK=${DOCKER_NETWORK}
 ITSM_HOST_PORT=${ITSM_HOST_PORT}
 MONGO_DATABASE=${MONGO_DATABASE}
+IM_MONGO_DATABASE=${IM_MONGO_DATABASE:-}
 IDENTITY_SERVICE_URL=${IDENTITY_URL}
 CONSUL_HTTP_ADDR=${CONSUL_ADDR}
 CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
@@ -333,6 +343,7 @@ if docker exec \
   -e MONGO_PASSWORD="${MONGO_PASSWORD:-}" \
   -e MONGO_USERNAME="${MONGO_USERNAME:-}" \
   -e MONGO_HOST="${MONGO_HOST:-}" \
+  -e IM_MONGO_DATABASE="${IM_MONGO_DATABASE:-}" \
   -e CONSUL_HTTP_ADDR="${CONSUL_ADDR}" \
   nexus-itsm-core python3 /app/scripts/bootstrap_external_im.py >/dev/null 2>&1; then
   echo "  ✓ Identity Management and MongoDB synchronization completed successfully."

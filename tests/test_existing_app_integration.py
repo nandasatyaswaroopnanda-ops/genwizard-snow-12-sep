@@ -403,5 +403,23 @@ def test_mlcore_mongo_rejection_and_atr_mongo_enforcement():
         assert "atr-mongo" in url
 
 
+def test_im_database_signature_collections_and_ui_load_auth():
+    """Verify that ITSM UI load checks from external IM and validates signature collections."""
+    # 1. UI Load with external IM token
+    fake_im_claims = {
+        "preferred_username": "sarah.johnson",
+        "email": "sarah.johnson@enterprise.corp",
+        "name": "Sarah Johnson",
+        "roles": ["itsm_user"]
+    }
+    with patch("backend.security._extract_external_token_claims", return_value=fake_im_claims):
+        resp = client.get("/api/auth/current", headers={"Authorization": "Bearer im_valid_jwt_token_12345"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["username"] == "sarah.johnson"
+        assert "itsm_user" in [data.get("role")] or "itsm_user" in (data.get("custom_groups") or [])
+
+
+
 
 

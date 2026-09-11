@@ -417,15 +417,18 @@ def get_current_user(
                 if not user and ext_mail:
                     user = db.query(User).filter(User.email.ilike(str(ext_mail).strip()), User.active == True).first()
 
+                token_roles = [str(r).lower() for r in (unverified.get("roles") or unverified.get("realm_access", {}).get("roles", []) or unverified.get("authorities", []) or unverified.get("groups", []) or [])]
                 if not user and ext_uname:
                     u_str = str(ext_uname).lower().strip()
-                    token_roles = [str(r).lower() for r in (unverified.get("roles") or unverified.get("realm_access", {}).get("roles", []) or unverified.get("authorities", []) or unverified.get("groups", []) or [])]
                     is_admin_user = (u_str == "admin") or any(r in ("admin", "administrator", "itsm_admin", "itsm-admin", "role_admin") for r in token_roles)
+                    is_support_user = any(r in ("itsm_user", "itsm-user", "support", "fulfiller", "role_user") for r in token_roles)
+                    assigned_role = "itsm_admin" if is_admin_user else ("itsm_user" if is_support_user else "itsm_read")
+
                     user = User(
                         username=str(ext_uname).strip(),
                         full_name=str(ext_name or ext_uname).replace(".", " ").title(),
                         email=str(ext_mail) if ext_mail else f"{ext_uname}@enterprise.corp",
-                        role="itsm_admin" if is_admin_user else "itsm_read",
+                        role=assigned_role,
                         active=True
                     )
                     db.add(user)
@@ -434,7 +437,16 @@ def get_current_user(
 
                     try:
                         from backend.models import CustomGroup, UserCustomGroup
-                        target_groups = ["itsm_admin", "IM_SAML", "ATR_SAML"] if is_admin_user else ["IM_SAML", "ATR_SAML"]
+                        target_groups = ["IM_SAML", "ATR_SAML"]
+                        if is_admin_user:
+                            target_groups.append("itsm_admin")
+                        if is_support_user:
+                            target_groups.append("itsm_user")
+                        for tr in token_roles:
+                            for cand in ["itsm_admin", "itsm_user", "itsm_read", "IM_SAML", "ATR_SAML"]:
+                                if cand.lower() == tr and cand not in target_groups:
+                                    target_groups.append(cand)
+
                         for s_name in target_groups:
                             saml_cg = db.query(CustomGroup).filter(CustomGroup.name == s_name).first()
                             if saml_cg and not db.query(UserCustomGroup).filter(UserCustomGroup.user_id == user.id, UserCustomGroup.custom_group_id == saml_cg.id).first():
@@ -445,6 +457,18 @@ def get_current_user(
                         pass
 
                 if user:
+                    try:
+                        from backend.models import CustomGroup, UserCustomGroup
+                        for tr in token_roles:
+                            for cand in ["itsm_admin", "itsm_user", "itsm_read", "IM_SAML", "ATR_SAML"]:
+                                if cand.lower() == tr:
+                                    cg = db.query(CustomGroup).filter(CustomGroup.name == cand).first()
+                                    if cg and not db.query(UserCustomGroup).filter(UserCustomGroup.user_id == user.id, UserCustomGroup.custom_group_id == cg.id).first():
+                                        db.add(UserCustomGroup(user_id=user.id, custom_group_id=cg.id))
+                        db.commit()
+                        db.refresh(user)
+                    except Exception:
+                        pass
                     return user
         except Exception:
             pass

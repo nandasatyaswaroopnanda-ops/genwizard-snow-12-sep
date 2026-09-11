@@ -7,46 +7,103 @@
 //   load("scripts/seed_im_mongo.js")
 // ==============================================================================
 
-// Dynamic database discovery in atr-mongo:
-// Locates the existing Identity Management database (containing collections:
-// 'aDGroup', 'group', 'user', 'permission', 'mongobeelock', 'userIdentityProviderGroups')
-// as well as the ITSM database 'nexus_itsm'.
-let targetDbs = ["nexus_itsm"];
+// ==============================================================================
+// 1. STRICT IDENTITY-MANAGEMENT DATABASE IDENTIFICATION & VERIFICATION
+// ==============================================================================
+// Identity-Management in atr-mongo contains exact collections:
+// - aDGroup, application, dbchnagelog, failedAuthentiation, group,
+// - jwtpublickey, mongobeelock, passwordHistory, permission, session,
+// - user, userIdentityProviderGroups
+//
+// Rules:
+// 1. Strictly target the identity-management database only.
+// 2. Check that the signature collections exist.
+// 3. ONLY if those collections are present, add ITSM groups/permissions.
+// ==============================================================================
+
+let imDatabaseName = "";
+const knownCandidateNames = ["identity-management", "identity_management", "im", "aaam-atr-v3", "aaam"];
 
 try {
   const adminDb = db.getSiblingDB("admin");
   const dbsRes = adminDb.runCommand({ listDatabases: 1 });
   const allDbs = (dbsRes && dbsRes.databases) ? dbsRes.databases.map(function(d) { return d.name; }) : [];
-  
-  allDbs.forEach(function(dName) {
-    if (["admin", "config", "local"].includes(dName)) return;
-    const testDb = db.getSiblingDB(dName);
-    const colls = testDb.getCollectionNames();
-    
-    // Check for signature collections of Spring Boot Identity Management
-    const hasImSignature = colls.some(function(c) {
-      const lower = c.toLowerCase();
-      return lower === "adgroup" || lower === "useridentityprovidergroups" || 
-             lower === "mongobeelock" || lower === "jwtpublickey" || lower === "dbchnagelog" || lower === "dbchangelog";
-    }) || (colls.includes("group") && colls.includes("user"));
 
-    if (hasImSignature && !targetDbs.includes(dName)) {
-      targetDbs.push(dName);
-      print("  ✓ Auto-detected existing Identity Management database: [" + dName + "]");
+  // Search candidate databases first, then fallback to scan
+  const dbsToCheck = [];
+  knownCandidateNames.forEach(function(cName) {
+    if (allDbs.includes(cName) && !dbsToCheck.includes(cName)) dbsToCheck.push(cName);
+  });
+  allDbs.forEach(function(dName) {
+    if (!["admin", "config", "local", "nexus_itsm"].includes(dName) && !dbsToCheck.includes(dName)) {
+      dbsToCheck.push(dName);
     }
   });
+
+  for (let i = 0; i < dbsToCheck.length; i++) {
+    const dName = dbsToCheck[i];
+    const testDb = db.getSiblingDB(dName);
+    const colls = testDb.getCollectionNames();
+
+    // Verify key signature collections of the existing Identity Management service
+    const hasGroup = colls.includes("group");
+    const hasUser = colls.includes("user");
+    const hasPermission = colls.includes("permission");
+    const hasAdGroup = colls.some(function(c) { return c.toLowerCase() === "adgroup"; });
+    const hasImKeys = colls.some(function(c) {
+      const lower = c.toLowerCase();
+      return lower === "useridentityprovidergroups" || lower === "mongobeelock" ||
+             lower === "jwtpublickey" || lower === "dbchnagelog" || lower === "dbchangelog" ||
+             lower === "failedauthentiation" || lower === "failedauthentication" || lower === "passwordhistory";
+    });
+
+    if (hasGroup && hasUser && (hasPermission || hasAdGroup || hasImKeys)) {
+      imDatabaseName = dName;
+      print("  ✓ Strictly verified Identity Management database: [" + dName + "]");
+      print("    Found collections: " + colls.filter(function(c) {
+        return ["aDGroup", "application", "group", "permission", "user", "jwtpublickey", "mongobeelock", "userIdentityProviderGroups"].includes(c);
+      }).join(", "));
+      break;
+    }
+  }
 } catch (e) {
-  print("  (!) Notice: listDatabases restricted or unavailable (" + e.message + "). Using candidate databases.");
-  ["identity_management", "identity-management", "im", "aaam", "aaam-atr-v3", "im_db"].forEach(function(d) {
-    if (!targetDbs.includes(d)) targetDbs.push(d);
-  });
+  print("  (!) listDatabases notice: " + e.message);
+  for (let j = 0; j < knownCandidateNames.length; j++) {
+    const fallbackDb = db.getSiblingDB(knownCandidateNames[j]);
+    const fColls = fallbackDb.getCollectionNames();
+    if (fColls.includes("group") && fColls.includes("user")) {
+      imDatabaseName = knownCandidateNames[j];
+      print("  ✓ Located Identity Management database: [" + imDatabaseName + "]");
+      break;
+    }
+  }
 }
+
+if (!imDatabaseName) {
+  print("  (!) Note: Dedicated identity-management database not yet detected in atr-mongo or collections pending initialization.");
+}
+
+// Target databases to process:
+// 1. Existing IM database (if strictly verified)
+// 2. Dedicated ITSM database 'nexus_itsm'
+const targetDbs = [];
+if (imDatabaseName) targetDbs.push(imDatabaseName);
+targetDbs.push("nexus_itsm");
 
 targetDbs.forEach(function(dbName) {
   const currentDb = db.getSiblingDB(dbName);
   print("\n========================================================");
   print(">>> Configuring Groups & DLs in database: " + dbName);
   print("========================================================");
+
+  if (dbName !== "nexus_itsm") {
+    const existingColls = currentDb.getCollectionNames();
+    const hasRequired = existingColls.includes("group") && existingColls.includes("user");
+    if (!hasRequired) {
+      print("  (!) Strict check: [" + dbName + "] does not contain required collections ('group', 'user'). Skipping modifications.");
+      return;
+    }
+  }
 
   // 1. Core Groups with Attached Permissions
   const groupsToSeed = [
