@@ -98,7 +98,9 @@ def resolve_mongo_config() -> Tuple[str, str]:
     mongo_pwd = os.getenv("MONGO_PASSWORD", "").strip()
     if mongo_pwd:
         mongo_user = os.getenv("MONGO_USERNAME", os.getenv("MONGO_USER", "atr")).strip()
-        mongo_host = os.getenv("MONGO_HOST", "atr-mongo").strip()
+        mongo_host = os.getenv("MONGO_HOST", "atr-mongo").strip() or "atr-mongo"
+        if "mlcore" in mongo_host.lower():
+            mongo_host = "atr-mongo"
         mongo_port = os.getenv("MONGO_PORT", "27017").strip()
         mongo_auth_db = os.getenv("MONGO_AUTH_SOURCE", "admin").strip()
         return f"mongodb://{mongo_user}:{mongo_pwd}@{mongo_host}:{mongo_port}/{mongo_db_name}?authSource={mongo_auth_db}", mongo_db_name
@@ -115,6 +117,8 @@ def resolve_mongo_config() -> Tuple[str, str]:
             spring_pwd = _get_consul_raw(consul_addr, "configuration/aaam-atr-v3-gateway/spring.data.mongodb.password", hdrs)
             if spring_pwd:
                 spring_host = _get_consul_raw(consul_addr, "configuration/aaam-atr-v3-gateway/spring.data.mongodb.host", hdrs) or "atr-mongo"
+                if "mlcore" in spring_host.lower():
+                    spring_host = "atr-mongo"
                 spring_user = _get_consul_raw(consul_addr, "configuration/aaam-atr-v3-gateway/spring.data.mongodb.username", hdrs) or "atr"
                 spring_auth_db = _get_consul_raw(consul_addr, "configuration/aaam-atr-v3-gateway/spring.data.mongodb.authentication_database", hdrs) or "admin"
 
@@ -156,6 +160,8 @@ def resolve_mongo_config() -> Tuple[str, str]:
                         user = data.get("username") or data.get("user") or "atr"
                         pwd = data.get("password") or data.get("pass") or ""
                         host = data.get("host") or data.get("hostname") or "atr-mongo"
+                        if "mlcore" in host.lower():
+                            host = "atr-mongo"
                         port = data.get("port") or 27017
                         database = data.get("database") or data.get("db") or mongo_db_name
                         auth_src = data.get("authSource") or "admin"

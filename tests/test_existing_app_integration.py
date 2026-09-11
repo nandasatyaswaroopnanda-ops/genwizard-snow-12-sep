@@ -370,4 +370,38 @@ def test_deflated_and_proxy_header_authentication():
     assert resp_proxy.json()["username"] == "proxy_employee"
 
 
+def test_mlcore_mongo_rejection_and_atr_mongo_enforcement():
+    """Verify that if MONGO_HOST or Consul provides mlcore-mongo, it is strictly rejected in favor of atr-mongo."""
+    # Case 1: MONGO_HOST environment variable set to mlcore-mongo
+    with patch.dict("os.environ", {"MONGO_PASSWORD": "Pass", "MONGO_HOST": "mlcore-mongo", "MONGO_DATABASE": "nexus_itsm"}, clear=False):
+        url, db = resolve_mongo_config()
+        assert "mlcore" not in url
+        assert "atr-mongo" in url
+
+    # Case 2: Consul Spring host set to mlcore-mongo:27017
+    mock_responses = {
+        "http://consul:8500/v1/kv/configuration/aaam-atr-v3-gateway/spring.data.mongodb.password": "Pass123",
+        "http://consul:8500/v1/kv/configuration/aaam-atr-v3-gateway/spring.data.mongodb.host": "mlcore-mongo:27017",
+        "http://consul:8500/v1/kv/configuration/aaam-atr-v3-gateway/spring.data.mongodb.username": "atr",
+        "http://consul:8500/v1/kv/configuration/aaam-atr-v3-gateway/spring.data.mongodb.authentication_database": "admin",
+    }
+
+    def mock_get(url, params=None, headers=None, timeout=None):
+        mock_resp = MagicMock()
+        val = mock_responses.get(url)
+        if val is not None:
+            mock_resp.status_code = 200
+            mock_resp.text = val
+        else:
+            mock_resp.status_code = 404
+            mock_resp.text = ""
+        return mock_resp
+
+    with patch.dict("os.environ", {"CONSUL_HTTP_ADDR": "http://consul:8500", "MONGO_PASSWORD": "", "MONGO_URL": "", "MONGO_HOST": ""}, clear=False), patch("requests.get", side_effect=mock_get):
+        url, db = resolve_mongo_config()
+        assert "mlcore" not in url
+        assert "atr-mongo" in url
+
+
+
 

@@ -48,7 +48,7 @@ services:
       - ITSM_BOOTSTRAP_ADMIN_PASSWORD=${ITSM_BOOTSTRAP_ADMIN_PASSWORD:-}
       - MONGO_PASSWORD=${MONGO_PASSWORD:-}
       - MONGO_USERNAME=${MONGO_USERNAME:-}
-      - MONGO_HOST=${MONGO_HOST:-}
+      - MONGO_HOST=${MONGO_HOST:-atr-mongo}
       
       # AI Copilot / Knowledge Engine token
       - KM_API_TOKEN=${KM_API_TOKEN:-local_demo_token}

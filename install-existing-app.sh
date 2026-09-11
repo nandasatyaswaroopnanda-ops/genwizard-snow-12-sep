@@ -48,15 +48,17 @@ if command -v lsof >/dev/null 2>&1 && lsof -i:"${ITSM_HOST_PORT}" >/dev/null 2>&
 fi
 
 # 1. Auto-detect Existing Application Stack Containers & Port
+# STRICT ISOLATION: Only discover 'atr-mongo' and ATR core services.
+# Explicitly filter out 'mlcore', 'mlcore-mongo', and any third-party mongo instances.
 EXISTING_CONTAINERS=""
 if command -v docker >/dev/null 2>&1; then
-  EXISTING_CONTAINERS=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -iE 'identity|mongo|consul|gateway|nginx|atr' || true)
+  EXISTING_CONTAINERS=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -iE 'identity|consul|gateway|nginx|atr' || true)
 fi
 
 IM_CONTAINER=""
 IM_PORT="8080"
 if [[ -n "$EXISTING_CONTAINERS" ]]; then
-  IM_CONTAINER=$(echo "$EXISTING_CONTAINERS" | grep -iE 'identity|im-' | head -n1 || true)
+  IM_CONTAINER=$(echo "$EXISTING_CONTAINERS" | grep -v 'mlcore' | grep -iE 'identity|im-' | head -n1 || true)
   if [[ -n "$IM_CONTAINER" ]]; then
     DETECTED_IM_PORT=$(docker inspect "$IM_CONTAINER" --format '{{range $p, $conf := .NetworkSettings.Ports}}{{$p}}{{"\n"}}{{end}}' 2>/dev/null | grep -oE '[0-9]+' | head -n1 || true)
     if [[ -n "$DETECTED_IM_PORT" ]]; then
@@ -72,7 +74,7 @@ echo "==> Target Identity Management: ${IDENTITY_URL} (Container: '${IM_HOST}', 
 # Auto-detect Consul container & interact directly via Docker CLI
 CONSUL_CONTAINER=""
 if [[ -n "$EXISTING_CONTAINERS" ]]; then
-  CONSUL_CONTAINER=$(echo "$EXISTING_CONTAINERS" | grep -iE 'consul' | head -n1 || true)
+  CONSUL_CONTAINER=$(echo "$EXISTING_CONTAINERS" | grep -v 'mlcore' | grep -iE 'consul' | head -n1 || true)
 fi
 
 if [[ -n "$CONSUL_CONTAINER" ]]; then
@@ -100,23 +102,34 @@ if [[ -n "$CONSUL_CONTAINER" ]]; then
 
   DIRECT_MONGO_HOST=$(docker exec "$CONSUL_CONTAINER" consul kv get configuration/aaam-atr-v3-gateway/spring.data.mongodb.host 2>/dev/null || true)
   if [[ -n "$DIRECT_MONGO_HOST" ]]; then
-    export MONGO_HOST="$DIRECT_MONGO_HOST"
+    if [[ "$DIRECT_MONGO_HOST" == *"mlcore"* ]]; then
+      echo "  (!) Overriding Consul MongoDB host: strictly isolated to 'atr-mongo'"
+      export MONGO_HOST="atr-mongo"
+    else
+      export MONGO_HOST="$DIRECT_MONGO_HOST"
+    fi
   fi
 fi
 
-# Auto-detect MongoDB container (defaults to 'atr-mongo') & interact directly via Docker CLI
+# Auto-detect MongoDB container (strictly 'atr-mongo', never 'mlcore-mongo') & interact directly via Docker CLI
 MONGO_CONTAINER="atr-mongo"
-if [[ -n "$EXISTING_CONTAINERS" ]]; then
-  DETECTED_MONGO=$(echo "$EXISTING_CONTAINERS" | grep -iE 'atr-mongo|mongo' | head -n1 || true)
-  if [[ -n "$DETECTED_MONGO" ]]; then
-    MONGO_CONTAINER="$DETECTED_MONGO"
+if command -v docker >/dev/null 2>&1; then
+  # STRICT: Target only atr-mongo (never mlcore-mongo or generic mongo)
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -qE '^atr-mongo$'; then
+    MONGO_CONTAINER="atr-mongo"
+  elif docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -iE '\batr[-_]mongo\b|\bmongo[-_]atr\b' | head -n1 | grep -q .; then
+    DETECTED_MONGO=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -iE '\batr[-_]mongo\b|\bmongo[-_]atr\b' | head -n1 | tr -d '\r')
+    if [[ -n "$DETECTED_MONGO" ]]; then
+      MONGO_CONTAINER="$DETECTED_MONGO"
+    fi
   fi
 fi
 
-if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^${MONGO_CONTAINER}$"; then
-  echo "==> Detected active MongoDB container: '${MONGO_CONTAINER}'"
-  export MONGO_CONTAINER="$MONGO_CONTAINER"
-  export MONGO_HOST="${MONGO_HOST:-$MONGO_CONTAINER}"
+export MONGO_CONTAINER="$MONGO_CONTAINER"
+export MONGO_HOST="${MONGO_HOST:-$MONGO_CONTAINER}"
+
+if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -qE "^${MONGO_CONTAINER}$"; then
+  echo "==> Detected active MongoDB container: '${MONGO_CONTAINER}' (strictly isolated from mlcore)"
 
   echo "==> Interacting directly with MongoDB container ('${MONGO_CONTAINER}') via Docker CLI..."
   if docker exec "$MONGO_CONTAINER" mongosh --quiet --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q '1'; then
@@ -124,12 +137,30 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/n
   elif docker exec "$MONGO_CONTAINER" mongo --quiet --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q '1'; then
     echo "  ✓ Direct Docker CLI ping to '${MONGO_CONTAINER}' confirmed MongoDB is responsive."
   fi
+else
+  echo "==> Target MongoDB container: '${MONGO_CONTAINER}'"
 fi
 
 # 2. Auto-detect & Validate Existing User-Defined Docker Network
 DETECTED_NET=""
-if [[ -n "$EXISTING_CONTAINERS" ]]; then
+# Prioritize inspecting atr-mongo, then identity, then consul (strictly avoiding mlcore)
+PRIORITY_CONTAINERS="${MONGO_CONTAINER} identity-management consul"
+for pc in $PRIORITY_CONTAINERS; do
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -qE "^${pc}$"; then
+    c_net=$(docker inspect "$pc" --format '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' 2>/dev/null | tr -d '\r' | grep -vE '^(bridge|host|none)$' | head -n1 || true)
+    if [[ -n "$c_net" ]]; then
+      DETECTED_NET="$c_net"
+      echo "==> Detected active Docker network '${DETECTED_NET}' from target container '${pc}'"
+      break
+    fi
+  fi
+done
+
+if [[ -z "$DETECTED_NET" && -n "$EXISTING_CONTAINERS" ]]; then
   for c in $EXISTING_CONTAINERS; do
+    if [[ "$c" == *"mlcore"* ]]; then
+      continue
+    fi
     c_net=$(docker inspect "$c" --format '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' 2>/dev/null | tr -d '\r' | grep -vE '^(bridge|host|none)$' | head -n1 || true)
     if [[ -n "$c_net" ]]; then
       DETECTED_NET="$c_net"
@@ -144,7 +175,7 @@ if [[ -n "${EXISTING_DOCKER_NETWORK:-}" ]]; then
 fi
 
 if [[ -z "$DETECTED_NET" ]] && command -v docker >/dev/null 2>&1; then
-  DETECTED_NET=$(docker network ls --format '{{.Name}}' 2>/dev/null | tr -d '\r' | grep -iE 'atr|app|prod|backend|gateway|itsm' | grep -vE '^(bridge|host|none)$' | head -n1 || true)
+  DETECTED_NET=$(docker network ls --format '{{.Name}}' 2>/dev/null | tr -d '\r' | grep -v 'mlcore' | grep -iE 'atr|app|prod|backend|gateway|itsm' | grep -vE '^(bridge|host|none)$' | head -n1 || true)
 fi
 
 # Fallback: ensure a dedicated user-defined network exists (never default to plain unmanaged bridge)
@@ -161,7 +192,9 @@ if command -v docker >/dev/null 2>&1; then
   # Seamlessly attach existing containers to this network so DNS resolution is 100% reliable
   if [[ -n "$EXISTING_CONTAINERS" ]]; then
     for c in $EXISTING_CONTAINERS; do
-      docker network connect "$DETECTED_NET" "$c" 2>/dev/null || true
+      if [[ "$c" != *"mlcore"* ]]; then
+        docker network connect "$DETECTED_NET" "$c" 2>/dev/null || true
+      fi
     done
   fi
 fi
@@ -282,8 +315,8 @@ done
 echo "==> Synchronizing IM groups, ATR_SAML/IM_SAML & admin privileges..."
 sleep 2
 
-# 6a. Direct seed execution inside MongoDB container (atr-mongo) via docker exec
-if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^${MONGO_CONTAINER}$"; then
+# 6a. Direct seed execution inside MongoDB container (strictly atr-mongo) via docker exec
+if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -qE "^${MONGO_CONTAINER}$"; then
   if [[ -f "$APP_DIR/scripts/seed_im_mongo.js" && -n "${MONGO_PASSWORD:-}" ]]; then
     echo "  -> Executing direct database seed inside '${MONGO_CONTAINER}' via docker exec..."
     if docker exec -i "$MONGO_CONTAINER" mongosh -u "${MONGO_USERNAME:-atr}" -p "$MONGO_PASSWORD" --authenticationDatabase admin < "$APP_DIR/scripts/seed_im_mongo.js" >/dev/null 2>&1; then
