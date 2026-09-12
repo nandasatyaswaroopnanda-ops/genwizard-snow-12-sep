@@ -18,8 +18,10 @@ echo "==> Creating clean, minimal runtime package for server deployment..."
 # Make sure scripts are executable
 chmod +x install-existing-app.sh scripts/bootstrap_external_im.py
 
-# Create a temporary staging directory to guarantee zero unnecessary files
-STAGE_DIR=$(mktemp -d /tmp/nexus-itsm-stage.XXXXXX)
+# Create a temporary staging directory within workspace to guarantee clean packaging
+STAGE_DIR="${APP_DIR}/.package_stage"
+rm -rf "${STAGE_DIR}"
+mkdir -p "${STAGE_DIR}"
 trap 'rm -rf "${STAGE_DIR}"' EXIT
 
 # Copy ONLY runtime components
@@ -28,17 +30,25 @@ cp -r frontend "${STAGE_DIR}/"
 cp -r identity_service "${STAGE_DIR}/"
 cp -r scripts "${STAGE_DIR}/"
 cp Dockerfile "${STAGE_DIR}/"
+cp Dockerfile.backend "${STAGE_DIR}/" 2>/dev/null || true
 cp requirements.txt "${STAGE_DIR}/"
 cp docker-compose.existing-app-addon.yml "${STAGE_DIR}/"
 cp install-existing-app.sh "${STAGE_DIR}/"
 cp README.md "${STAGE_DIR}/" 2>/dev/null || true
 cp .dockerignore "${STAGE_DIR}/" 2>/dev/null || true
 
-# Clean any python bytecode, DS_Store, or non-runtime files inside the stage
+# Clean any python bytecode, DS_Store, databases, logs or non-runtime files inside the stage
 find "${STAGE_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${STAGE_DIR}" -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 find "${STAGE_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
+find "${STAGE_DIR}" -type f -name "*.db" -delete 2>/dev/null || true
+find "${STAGE_DIR}" -type f -name "*.log" -delete 2>/dev/null || true
 find "${STAGE_DIR}" -type f -name ".DS_Store" -delete 2>/dev/null || true
-rm -f "${STAGE_DIR}/identity_service/Dockerfile" 2>/dev/null || true
+find "${STAGE_DIR}" -type f -name "*.tar.gz" -delete 2>/dev/null || true
+find "${STAGE_DIR}" -type f -name "*.atr.gz" -delete 2>/dev/null || true
+rm -rf "${STAGE_DIR}/tests" 2>/dev/null || true
+rm -rf "${STAGE_DIR}/.git" 2>/dev/null || true
+rm -rf "${STAGE_DIR}/.venv" 2>/dev/null || true
 rm -f "${STAGE_DIR}/scripts/security-scan.sh" 2>/dev/null || true
 rm -rf "${STAGE_DIR}/frontend/static" 2>/dev/null || true
 
