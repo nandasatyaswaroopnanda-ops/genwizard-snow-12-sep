@@ -402,13 +402,15 @@ def get_current_user(
                 ext_uname = unverified.get("preferred_username") or unverified.get("username") or unverified.get("user") or unverified.get("sub") or unverified.get("login")
                 ext_mail = unverified.get("email") or unverified.get("mail")
                 ext_name = (
-                    unverified.get("name")
-                    or unverified.get("fullName")
-                    or unverified.get("displayName")
+                    unverified.get("displayName")
                     or unverified.get("display_name")
+                    or unverified.get("fullName")
                     or unverified.get("full_name")
+                    or unverified.get("name")
+                    or unverified.get("cn")
                     or (f"{unverified.get('firstName', '')} {unverified.get('lastName', '')}".strip() or None)
                     or (f"{unverified.get('first_name', '')} {unverified.get('last_name', '')}".strip() or None)
+                    or (f"{unverified.get('given_name', '')} {unverified.get('family_name', '')}".strip() or None)
                 )
                 ext_uid = unverified.get("user_id") or unverified.get("userId") or unverified.get("id")
 
