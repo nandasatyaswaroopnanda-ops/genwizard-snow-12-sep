@@ -1,0 +1,30 @@
+/**
+ * Genwizard ITSM - SSO Redirect Styles
+ * Externalized to comply with strict Content-Security-Policy (CSP) style-src directives.
+ */
+
+@keyframes pulse-glow {
+  0%, 100% { transform: scale(1); opacity: 0.8; filter: drop-shadow(0 0 15px rgba(168, 85, 247, 0.6)); }
+  50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 25px rgba(168, 85, 247, 0.9)); }
+}
+@keyframes beam-flow {
+  0% { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(1000%); }
+}
+.pulse-animation {
+  animation: pulse-glow 3s infinite ease-in-out;
+}
+.beam-path {
+  stroke-dasharray: 8 6;
+  animation: beam-flow 1.5s linear infinite;
+}
+.glass-panel {
+  background: rgba(17, 10, 31, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+}

@@ -7,60 +7,14 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>GenWizard Support Portal</title>
-  <script>
-    (function() {
-      var p = window.location.pathname;
-      if (p === '/itsm') {
-        window.location.replace('/itsm/' + window.location.search + window.location.hash);
-        return;
-      }
-      var b = document.createElement('base');
-      b.href = p.startsWith('/itsm') ? '/itsm/' : '/';
-      document.head.appendChild(b);
-    })();
-  </script>
+  <!-- Bootstrap & Pre-initialization: strictly externalized for CSP compliance -->
+  <script src="js/init.js?v=2.14.0"></script>
   <!-- Local Vendor Libraries: works in file://, http://localhost:8000/, and http://localhost:8000/itsm/ -->
   <script src="vendor/tailwind.js"></script>
   <script src="vendor/chart.umd.min.js"></script>
   <script src="vendor/lucide.min.js"></script>
   <script src="vendor/marked.min.js"></script>
   <link rel="stylesheet" href="css/style.css?v=2.14.0">
-  <script>
-    function safeRenderIcons() {
-      try {
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons();
-        }
-      } catch (e) {
-        console.warn('Lucide icon render error:', e);
-      }
-    }
-  </script>
-  <script>
-    window.tailwind = window.tailwind || {};
-    window.tailwind.config = {
-      darkMode: ['class', '[data-theme="dark"]'],
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#faf5ff',
-              100: '#f3e8ff',
-              200: '#e9d5ff',
-              300: '#d8b4fe',
-              400: '#c084fc',
-              500: '#a855f7',
-              600: '#9333ea',
-              700: '#7e22ce',
-              800: '#6b21a8',
-              900: '#581c87',
-              accenture: '#a100ff',
-            }
-          }
-        }
-      }
-    };
-  </script>
 </head>
 <body class="min-h-screen flex flex-col bg-[var(--bg-primary)] text-[var(--text-primary)]">
 
@@ -412,8 +366,5 @@
 
   <!-- Scripts: works in file://, http://localhost:8000/, and http://localhost:8000/itsm/ -->
   <script src="js/app.js?v=2.14.0"></script>
-  <script>
-    safeRenderIcons();
-  </script>
 </body>
 </html>
