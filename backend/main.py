@@ -62,6 +62,21 @@ async def itsm_subpath_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    csp_header = os.getenv(
+        "CONTENT_SECURITY_POLICY",
+        (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data: blob:; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' data: blob:; "
+            "frame-src 'self'; "
+            "frame-ancestors 'self';"
+        )
+    )
+    if csp_header:
+        response.headers["Content-Security-Policy"] = csp_header
     if path.endswith(".js") or path.endswith(".html") or path in ("", "/", "/itsm", "/itsm/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
