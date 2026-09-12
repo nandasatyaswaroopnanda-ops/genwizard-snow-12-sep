@@ -517,6 +517,12 @@ function createMultiSelectDropdown({
       renderList();
       if (triggerChange) onChange([...curSelected]);
     },
+    setSelected: (newVals, triggerChange = false) => {
+      curSelected = new Set(newVals.filter(v => curOptions.includes(v)));
+      updateSummary();
+      renderList();
+      if (triggerChange) onChange([...curSelected]);
+    },
     setOptions: (newOpts, preserveSelections = true) => {
       curOptions = newOpts.slice();
       if (preserveSelections) {
@@ -657,7 +663,7 @@ async function loadCurrentUser() {
       updateBackendStatus(false, 'API Connected (Guest)');
     }
   } catch (err) {
-    console.error('Failed to load current user', err);
+    console.warn('Current user load note:', err.message);
     updateBackendStatus(false, 'Backend Offline');
   }
 }
@@ -673,7 +679,7 @@ async function loadAllUsers() {
       renderUserSwitcherDropdown();
     }
   } catch (err) {
-    console.error('Failed to load users list', err);
+    console.warn('Users list load note:', err.message);
   }
 }
 
@@ -885,15 +891,15 @@ function switchUser(userId) {
 
 // --- NOTIFICATIONS ---
 async function loadNotifications() {
-  if (!state.currentUser) return;
+  const uid = (state.currentUser?.id || localStorage.getItem('nexus_user_id') || '1').toString();
   try {
     const res = await fetch(`${API_BASE}/notifications`, {
-      headers: { 'X-User-ID': state.currentUser.id.toString() }
+      headers: { 'X-User-ID': uid }
     });
     if (res.ok) {
       const data = await res.json();
-      state.unreadCount = data.unread_count;
-      state.notifications = data.notifications;
+      state.unreadCount = data.unread_count || 0;
+      state.notifications = data.notifications || [];
       const badge = document.getElementById('unreadCountBadge');
       if (badge) {
         if (state.unreadCount > 0) {
@@ -906,7 +912,7 @@ async function loadNotifications() {
       renderNotifications();
     }
   } catch (err) {
-    console.error('Failed to load notifications', err);
+    console.warn('Notifications note:', err.message);
   }
 }
 
@@ -3402,17 +3408,17 @@ async function openReassignModal(ticketId, currentGroupId, currentAssigneeId, cu
   let projects = [];
   let apps = [];
   try {
-    const authHeaders = { 'X-User-ID': state.currentUser.id.toString() };
+    const authHeaders = { 'X-User-ID': (state.currentUser?.id || '1').toString() };
     const [grpRes, projRes, appRes] = await Promise.all([
       fetch(`${API_BASE}/assignment-groups`),
-      fetch(`${API_BASE}/admin/projects`, { headers: authHeaders }),
-      fetch(`${API_BASE}/admin/applications`, { headers: authHeaders })
+      fetch(`${API_BASE}/projects`),
+      fetch(`${API_BASE}/applications`)
     ]);
     if (grpRes.ok) groups = await grpRes.json();
     if (projRes.ok) projects = await projRes.json();
     if (appRes.ok) apps = await appRes.json();
   } catch (e) {
-    console.error(e);
+    console.warn('Reassign data load note:', e.message);
   }
 
   const isGlobalAdmin = !!(state.currentUser?.is_global_admin || state.currentUser?.username === 'admin');
@@ -8000,36 +8006,41 @@ async function loadAiConversationsList() {
   const container = document.getElementById('fullAiHistoryList');
   if (!container) return;
   try {
+    const uid = (state.currentUser?.id || localStorage.getItem('nexus_user_id') || '1').toString();
     const res = await fetch(`${API_BASE}/ai/conversations`, {
-      headers: { 'X-User-ID': state.currentUser.id.toString() }
+      headers: { 'X-User-ID': uid }
     });
+    if (!res.ok) return;
     const convs = await res.json();
+    if (!Array.isArray(convs)) return;
     container.innerHTML = convs.map(c => `
       <div onclick="selectAiConversation('${c.id}')" class="p-2.5 rounded-lg hover:bg-[var(--card-bg)] cursor-pointer truncate font-medium ${state.activeAiConversationId === c.id ? 'bg-[var(--card-bg)] text-purple-600 font-bold' : 'text-slate-400'}">
         ${c.title}
       </div>
     `).join('');
   } catch (err) {
-    console.error(err);
+    console.warn('AI conversation list note:', err.message);
   }
 }
 
 async function selectAiConversation(convId) {
   state.activeAiConversationId = convId;
   const msgContainer = document.getElementById('fullAiMessages');
+  if (!msgContainer) return;
   try {
     const res = await fetch(`${API_BASE}/ai/conversations/${convId}`);
+    if (!res.ok) return;
     const data = await res.json();
     msgContainer.innerHTML = (data.messages || []).map(m => `
       <div class="flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}">
         <div class="max-w-xl p-3.5 rounded-xl ${m.role === 'user' ? 'bg-purple-600 text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--border-color)]'}">
-          <div class="prose prose-sm">${marked.parse(m.content)}</div>
+          <div class="prose prose-sm">${marked.parse(m.content || '')}</div>
         </div>
       </div>
     `).join('');
     loadAiConversationsList();
   } catch (err) {
-    console.error(err);
+    console.warn('Select AI conversation note:', err.message);
   }
 }
 
@@ -8247,8 +8258,8 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
   if (!apps.length || !projects.length) {
     try {
       const [appRes, projRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/applications`, { headers: authHeaders }),
-        fetch(`${API_BASE}/admin/projects`, { headers: authHeaders })
+        fetch(`${API_BASE}/applications`, { headers: authHeaders }),
+        fetch(`${API_BASE}/projects`, { headers: authHeaders })
       ]);
       if (!apps.length && appRes && appRes.ok) apps = await appRes.json();
       if (!projects.length && projRes && projRes.ok) projects = await projRes.json();
