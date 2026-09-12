@@ -9,12 +9,13 @@
   <title>GenWizard Support Portal</title>
   <!-- Bootstrap & Pre-initialization: strictly externalized for CSP compliance -->
   <script src="js/init.js?v=2.14.0"></script>
+  <!-- Production Static Stylesheets: 100% CSP compliant, zero runtime inline style injection -->
+  <link rel="stylesheet" href="css/tailwind.min.css?v=2.14.0">
+  <link rel="stylesheet" href="css/style.css?v=2.14.0">
   <!-- Local Vendor Libraries: works in file://, http://localhost:8000/, and http://localhost:8000/itsm/ -->
-  <script src="vendor/tailwind.js"></script>
   <script src="vendor/chart.umd.min.js"></script>
   <script src="vendor/lucide.min.js"></script>
   <script src="vendor/marked.min.js"></script>
-  <link rel="stylesheet" href="css/style.css?v=2.14.0">
 </head>
 <body class="min-h-screen flex flex-col bg-[var(--bg-primary)] text-[var(--text-primary)]">
 
