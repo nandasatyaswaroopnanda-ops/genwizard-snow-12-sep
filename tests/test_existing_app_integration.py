@@ -420,6 +420,48 @@ def test_im_database_signature_collections_and_ui_load_auth():
         assert "itsm_user" in [data.get("role")] or "itsm_user" in (data.get("custom_groups") or [])
 
 
+def test_external_im_user_display_name_and_admin_user_authority():
+    """Verify that users logging in via existing IM see their exact display name,
+    and existing IM admin user seamlessly operates as ITSM global admin with zero breakage."""
+    # Test 1: User with displayName
+    user_claims = {
+        "username": "alex.morgan",
+        "displayName": "Alex Morgan, Senior VP",
+        "email": "alex.morgan@company.com",
+        "roles": ["itsm_user"]
+    }
+    with patch("backend.security._extract_external_token_claims", return_value=user_claims):
+        resp = client.get("/api/auth/current", headers={"Authorization": "Bearer token_alex"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["username"] == "alex.morgan"
+        assert data["full_name"] == "Alex Morgan, Senior VP"
 
+    # Test 2: User's name update in IM is reflected on next login
+    updated_user_claims = {
+        "username": "alex.morgan",
+        "displayName": "Alex Morgan, Lead Architect",
+        "email": "alex.morgan@company.com",
+        "roles": ["itsm_user"]
+    }
+    with patch("backend.security._extract_external_token_claims", return_value=updated_user_claims):
+        resp = client.get("/api/auth/current", headers={"Authorization": "Bearer token_alex_v2"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["full_name"] == "Alex Morgan, Lead Architect"
 
-
+    # Test 3: Existing IM admin user login
+    admin_claims = {
+        "username": "admin",
+        "displayName": "System Administrator",
+        "email": "admin@company.com",
+        "roles": ["admin", "itsm_admin"]
+    }
+    with patch("backend.security._extract_external_token_claims", return_value=admin_claims):
+        resp = client.get("/api/auth/current", headers={"Authorization": "Bearer token_admin"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["username"] == "admin"
+        assert data["full_name"] == "System Administrator"
+        assert data["is_global_admin"] is True
+        assert data["role"] == "itsm_admin"

@@ -11,6 +11,12 @@ def test_production_initializes_clean_and_blank():
     old_env = os.environ.get("SEED_DEMO_DATA")
     try:
         os.environ["SEED_DEMO_DATA"] = "false"
+        db = SessionLocal()
+        # Clean any leftover test users created by preceding integration test suites
+        for u in db.query(User).filter(User.username != "admin").all():
+            db.delete(u)
+        db.commit()
+        db.close()
         init_db_and_seed()
         db = SessionLocal()
         try:

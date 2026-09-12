@@ -401,7 +401,15 @@ def get_current_user(
             if unverified:
                 ext_uname = unverified.get("preferred_username") or unverified.get("username") or unverified.get("user") or unverified.get("sub") or unverified.get("login")
                 ext_mail = unverified.get("email") or unverified.get("mail")
-                ext_name = unverified.get("name") or unverified.get("fullName") or unverified.get("display_name")
+                ext_name = (
+                    unverified.get("name")
+                    or unverified.get("fullName")
+                    or unverified.get("displayName")
+                    or unverified.get("display_name")
+                    or unverified.get("full_name")
+                    or (f"{unverified.get('firstName', '')} {unverified.get('lastName', '')}".strip() or None)
+                    or (f"{unverified.get('first_name', '')} {unverified.get('last_name', '')}".strip() or None)
+                )
                 ext_uid = unverified.get("user_id") or unverified.get("userId") or unverified.get("id")
 
                 user = None
@@ -424,9 +432,14 @@ def get_current_user(
                     is_support_user = any(r in ("itsm_user", "itsm-user", "support", "fulfiller", "role_user") for r in token_roles)
                     assigned_role = "itsm_admin" if is_admin_user else ("itsm_user" if is_support_user else "itsm_read")
 
+                    # Use external name as-is if provided; otherwise generate clean title
+                    display_full_name = str(ext_name).strip() if ext_name else (
+                        "Administrator" if u_str == "admin" else str(ext_uname).replace(".", " ").title()
+                    )
+
                     user = User(
                         username=str(ext_uname).strip(),
-                        full_name=str(ext_name or ext_uname).replace(".", " ").title(),
+                        full_name=display_full_name,
                         email=str(ext_mail) if ext_mail else f"{ext_uname}@enterprise.corp",
                         role=assigned_role,
                         active=True
@@ -457,6 +470,11 @@ def get_current_user(
                         pass
 
                 if user:
+                    # Keep full_name synchronized with external IM if token has name claim
+                    if ext_name and str(ext_name).strip() and user.full_name != str(ext_name).strip():
+                        user.full_name = str(ext_name).strip()
+                        db.commit()
+                        db.refresh(user)
                     try:
                         from backend.models import CustomGroup, UserCustomGroup
                         for tr in token_roles:
