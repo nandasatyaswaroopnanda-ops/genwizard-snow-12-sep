@@ -4,8 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Opening Genwizard ITSM — Enterprise SSO Federation</title>
-  <script src="/static/vendor/tailwind.js"></script>
-  <script src="/static/vendor/lucide.min.js"></script>
+  <script>
+    (function() {
+      var p = window.location.pathname;
+      if (p === '/itsm') {
+        window.location.replace('/itsm/' + window.location.search + window.location.hash);
+        return;
+      }
+      var b = document.createElement('base');
+      b.href = p.startsWith('/itsm') ? '/itsm/' : '/';
+      document.head.appendChild(b);
+    })();
+  </script>
+  <script src="vendor/tailwind.js"></script>
+  <script src="vendor/lucide.min.js"></script>
   <style>
     @keyframes pulse-glow {
       0%, 100% { transform: scale(1); opacity: 0.8; filter: drop-shadow(0 0 15px rgba(168, 85, 247, 0.6)); }

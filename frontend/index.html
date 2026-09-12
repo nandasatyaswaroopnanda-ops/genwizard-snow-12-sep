@@ -7,6 +7,18 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>GenWizard Support Portal</title>
+  <script>
+    (function() {
+      var p = window.location.pathname;
+      if (p === '/itsm') {
+        window.location.replace('/itsm/' + window.location.search + window.location.hash);
+        return;
+      }
+      var b = document.createElement('base');
+      b.href = p.startsWith('/itsm') ? '/itsm/' : '/';
+      document.head.appendChild(b);
+    })();
+  </script>
   <!-- Local Vendor Libraries: works in file://, http://localhost:8000/, and http://localhost:8000/itsm/ -->
   <script src="vendor/tailwind.js"></script>
   <script src="vendor/chart.umd.min.js"></script>

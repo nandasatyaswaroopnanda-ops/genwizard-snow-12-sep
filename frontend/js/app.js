@@ -36,6 +36,98 @@ const API_BASE = window.location.protocol === 'file:'
   : (isSubpath ? '/itsm/api' : '/api');
 const ITSM_BASE_PATH = isSubpath ? '/itsm' : '';
 
+// Detect any active authentication token passed via URL, cookies, or existing IM storage
+function detectExternalAuthToken() {
+  try {
+    // 1. URL search or hash parameters (e.g. /itsm?token=... or /itsm#access_token=...)
+    const urlParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash || '';
+    const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
+    const urlToken = urlParams.get('token') || urlParams.get('access_token') || urlParams.get('auth_token') || urlParams.get('jwt') || urlParams.get('id_token')
+      || hashParams.get('token') || hashParams.get('access_token') || hashParams.get('id_token');
+    if (urlToken && urlToken.length > 8) {
+      localStorage.setItem('auth_token', urlToken);
+      return urlToken;
+    }
+
+    // 2. LocalStorage keys used by external Identity Management frontends
+    const storageKeys = ['auth_token', 'access_token', 'accessToken', 'token', 'jwt', 'id_token', 'im_token', 'user_token'];
+    for (const k of storageKeys) {
+      const val = localStorage.getItem(k);
+      if (val && typeof val === 'string' && val.length > 8) {
+        return val;
+      }
+    }
+
+    // 3. SessionStorage keys
+    for (const k of storageKeys) {
+      const val = sessionStorage.getItem(k);
+      if (val && typeof val === 'string' && val.length > 8) {
+        return val;
+      }
+    }
+
+    // 4. Nested tokens in user objects in localStorage/sessionStorage
+    for (const uKey of ['user', 'currentUser', 'current_user', 'auth', 'im_user']) {
+      const raw = localStorage.getItem(uKey) || sessionStorage.getItem(uKey);
+      if (raw) {
+        try {
+          const u = JSON.parse(raw);
+          const t = u.token || u.access_token || u.accessToken || u.jwt || u.id_token;
+          if (t && typeof t === 'string' && t.length > 8) {
+            return t;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 5. Browser cookies
+    if (typeof document !== 'undefined' && document.cookie) {
+      const m = document.cookie.match(/(?:^|;\s*)(?:auth_token|access_token|token|jwt|im_token|atr-token|Authorization|SESSION)=([^;]+)/i);
+      if (m && m[1]) {
+        let cookieVal = decodeURIComponent(m[1].trim());
+        if (cookieVal.toLowerCase().startsWith('bearer ')) cookieVal = cookieVal.substring(7).trim();
+        if (cookieVal.length > 8) return cookieVal;
+      }
+    }
+  } catch (err) {
+    console.warn('Error detecting external auth token:', err);
+  }
+  return '';
+}
+
+// Global fetch interceptor: automatically attaches Bearer token & X-User-ID to all API calls
+if (typeof window !== 'undefined' && window.fetch) {
+  const _rawFetch = window.fetch.bind(window);
+  window.fetch = function(resource, init) {
+    init = init || {};
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || detectExternalAuthToken();
+    const currentId = (typeof state !== 'undefined' && state.currentUser && state.currentUser.id)
+      ? state.currentUser.id.toString()
+      : (localStorage.getItem('nexus_user_id') || '1');
+    
+    let headers;
+    if (init.headers instanceof Headers) {
+      headers = init.headers;
+    } else if (Array.isArray(init.headers)) {
+      headers = new Headers(init.headers);
+    } else if (init.headers && typeof init.headers === 'object') {
+      headers = new Headers(init.headers);
+    } else {
+      headers = new Headers();
+    }
+
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    if (currentId && !headers.has('X-User-ID')) {
+      headers.set('X-User-ID', currentId);
+    }
+    init.headers = headers;
+    return _rawFetch(resource, init);
+  };
+}
+
 function updateBackendStatus(connected, message) {
   const badge = document.getElementById('backendStatusBadge');
   const dot = document.getElementById('backendStatusDot');
@@ -531,63 +623,6 @@ function toggleTheme() {
   safeCreateIcons();
 }
 
-// Detect any active authentication token passed via URL, cookies, or existing IM storage
-function detectExternalAuthToken() {
-  try {
-    // 1. URL search or hash parameters (e.g. /itsm?token=... or /itsm#access_token=...)
-    const urlParams = new URLSearchParams(window.location.search);
-    const hash = window.location.hash || '';
-    const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
-    const urlToken = urlParams.get('token') || urlParams.get('access_token') || urlParams.get('auth_token') || urlParams.get('jwt')
-      || hashParams.get('token') || hashParams.get('access_token');
-    if (urlToken && urlToken.length > 8) {
-      localStorage.setItem('auth_token', urlToken);
-      return urlToken;
-    }
-
-    // 2. LocalStorage keys used by external Identity Management frontends
-    const storageKeys = ['auth_token', 'access_token', 'accessToken', 'token', 'jwt', 'id_token', 'im_token'];
-    for (const k of storageKeys) {
-      const val = localStorage.getItem(k);
-      if (val && typeof val === 'string' && val.length > 8) {
-        return val;
-      }
-    }
-
-    // 3. SessionStorage keys
-    for (const k of storageKeys) {
-      const val = sessionStorage.getItem(k);
-      if (val && typeof val === 'string' && val.length > 8) {
-        return val;
-      }
-    }
-
-    // 4. Nested tokens in user objects in localStorage/sessionStorage
-    for (const uKey of ['user', 'currentUser', 'current_user', 'auth', 'im_user']) {
-      const raw = localStorage.getItem(uKey) || sessionStorage.getItem(uKey);
-      if (raw) {
-        try {
-          const u = JSON.parse(raw);
-          const t = u.token || u.access_token || u.accessToken || u.jwt || u.id_token;
-          if (t && typeof t === 'string' && t.length > 8) {
-            return t;
-          }
-        } catch (e) {}
-      }
-    }
-
-    // 5. Browser cookies
-    if (typeof document !== 'undefined' && document.cookie) {
-      const m = document.cookie.match(/(?:^|;\s*)(?:auth_token|access_token|token|jwt)=([^;]+)/);
-      if (m && m[1]) {
-        return decodeURIComponent(m[1]);
-      }
-    }
-  } catch (err) {
-    console.warn('Error detecting external auth token:', err);
-  }
-  return '';
-}
 
 // --- USER / PERSONA SWITCHING ---
 async function loadCurrentUser() {
@@ -620,6 +655,9 @@ async function loadCurrentUser() {
     if (res.ok) {
       state.currentUser = await res.json();
       localStorage.setItem('current_user', JSON.stringify(state.currentUser));
+      if (state.currentUser && state.currentUser.id) {
+        localStorage.setItem('nexus_user_id', String(state.currentUser.id));
+      }
       updateUserUI();
       updateBackendStatus(true, 'Backend Online');
     } else {
@@ -921,28 +959,49 @@ function initRouter() {
 function handleRoute() {
   const isEndUser = isUserEndUser(state.currentUser);
   const defaultRoute = isEndUser ? 'my-tickets' : 'dashboard';
-  const hash = window.location.hash.slice(2) || defaultRoute;
-  const parts = hash.split('/');
-  state.currentRoute = parts[0];
+
+  let rawHash = window.location.hash || '';
+
+  // 1. Detect and consume OAuth/OIDC/SAML tokens in hash if present (#access_token=..., #token=..., #id_token=...)
+  if (rawHash.includes('access_token=') || rawHash.includes('token=') || rawHash.includes('id_token=')) {
+    if (typeof detectExternalAuthToken === 'function') detectExternalAuthToken();
+    rawHash = '';
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/' + defaultRoute);
+    } else {
+      window.location.hash = '#/' + defaultRoute;
+    }
+  }
+
+  // 2. Cleanly strip '#' or '#/' and query strings
+  let routePath = rawHash.replace(/^#\/?/, '').split('?')[0].trim();
+  if (!routePath || routePath === 'cess_token' || routePath.startsWith('access_token')) {
+    routePath = defaultRoute;
+  }
+
+  const parts = routePath.split('/');
+  state.currentRoute = parts[0] || defaultRoute;
   state.routeParams = {
     id: parts[1] || null,
     sub: parts[2] || null
   };
 
-  // Enforce end-user route guard: IM_SAML end users can view My Tickets, All Tickets, Incidents, Service Requests, Changes, Knowledge, Applications, Projects, On-Call, and AI Assistant
+  // 3. Enforce end-user route guard: IM_SAML end users can view My Tickets, All Tickets, Incidents, Service Requests, Changes, Knowledge, Applications, Projects, On-Call, and AI Assistant
   if (isEndUser) {
     const allowed = ['my-tickets', 'tickets', 'incidents', 'service-requests', 'changes', 'knowledge', 'applications', 'projects', 'on-call', 'ai-assistant'];
     if (!allowed.includes(state.currentRoute)) {
       state.currentRoute = 'my-tickets';
       state.routeParams = { id: null, sub: null };
-      window.location.hash = '#/my-tickets';
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/my-tickets');
+      }
     }
   }
 
   // Update active sidebar item
   document.querySelectorAll('.nav-item').forEach(el => {
     const route = el.getAttribute('data-route');
-    if (route === hash || route === state.currentRoute) {
+    if (route === state.currentRoute || route === ('#/' + state.currentRoute) || route === ('#' + state.currentRoute)) {
       el.classList.add('bg-slate-800', 'text-white');
     } else {
       el.classList.remove('bg-slate-800', 'text-white');
@@ -953,70 +1012,84 @@ function handleRoute() {
   const app = document.getElementById('mainApp');
   if (!app) return;
 
-  switch (state.currentRoute) {
-    case 'dashboard':
-      renderDashboardView(app);
-      break;
-    case 'my-tickets':
+  try {
+    switch (state.currentRoute) {
+      case 'dashboard':
+        renderDashboardView(app);
+        break;
+      case 'my-tickets':
+        renderUnifiedTicketsView(app, { myTickets: true });
+        break;
+      case 'tickets':
+        renderUnifiedTicketsView(app);
+        break;
+      case 'incidents':
+        if (state.routeParams.id) {
+          renderIncidentDetailView(app, state.routeParams.id);
+        } else {
+          renderTicketsView(app, { type: 'Incident' });
+        }
+        break;
+      case 'service-requests':
+        if (state.routeParams.id) {
+          renderRequestDetailView(app, state.routeParams.id);
+        } else {
+          renderServiceRequestsView(app);
+        }
+        break;
+      case 'changes':
+        if (state.routeParams.id) {
+          renderChangeDetailView(app, state.routeParams.id);
+        } else {
+          renderChangesView(app);
+        }
+        break;
+      case 'knowledge':
+        renderKnowledgeView(app);
+        break;
+      case 'applications':
+        renderApplicationsView(app);
+        break;
+      case 'projects':
+        renderProjectsView(app);
+        break;
+      case 'assignment-groups':
+        renderAssignmentGroupsView(app);
+        break;
+      case 'on-call':
+        renderOnCallRosterView(app);
+        break;
+      case 'ai-assistant':
+        renderAiAssistantFullScreen(app);
+        break;
+      case 'ai':
+      case 'ai-analytics':
+      case 'ai-integration':
+        renderAiAdminView(app);
+        break;
+      case 'analytics':
+        renderAnalyticsDashboardView(app);
+        break;
+      case 'admin':
+        renderAdminSubView(app, state.routeParams.id);
+        break;
+      default:
+        if (isEndUser) {
+          renderUnifiedTicketsView(app, { myTickets: true });
+        } else {
+          renderDashboardView(app);
+        }
+        break;
+    }
+  } catch (routeErr) {
+    console.error('Error rendering route ' + state.currentRoute + ':', routeErr);
+    if (isEndUser) {
       renderUnifiedTicketsView(app, { myTickets: true });
-      break;
-    case 'tickets':
-      renderUnifiedTicketsView(app);
-      break;
-    case 'incidents':
-      if (state.routeParams.id) {
-        renderIncidentDetailView(app, state.routeParams.id);
-      } else {
-        renderTicketsView(app, { type: 'Incident' });
-      }
-      break;
-    case 'service-requests':
-      if (state.routeParams.id) {
-        renderRequestDetailView(app, state.routeParams.id);
-      } else {
-        renderServiceRequestsView(app);
-      }
-      break;
-    case 'changes':
-      if (state.routeParams.id) {
-        renderChangeDetailView(app, state.routeParams.id);
-      } else {
-        renderChangesView(app);
-      }
-      break;
-    case 'knowledge':
-      renderKnowledgeView(app);
-      break;
-    case 'applications':
-      renderApplicationsView(app);
-      break;
-    case 'projects':
-      renderProjectsView(app);
-      break;
-    case 'assignment-groups':
-      renderAssignmentGroupsView(app);
-      break;
-    case 'on-call':
-      renderOnCallRosterView(app);
-      break;
-    case 'ai-assistant':
-      renderAiAssistantFullScreen(app);
-      break;
-    case 'ai':
-    case 'ai-analytics':
-    case 'ai-integration':
-      renderAiAdminView(app);
-      break;
-    case 'analytics':
-      renderAnalyticsDashboardView(app);
-      break;
-    case 'admin':
-      renderAdminSubView(app, state.routeParams.id);
-      break;
-    default:
+    } else {
       renderDashboardView(app);
+    }
   }
-  lucide.createIcons();
+  safeCreateIcons();
 }
 
 // --- GLOBAL SEARCH ---
@@ -1208,20 +1281,29 @@ async function renderDashboardView(container, options = {}) {
   try {
     const query = currentDashboardProject ? `?project_name=${encodeURIComponent(currentDashboardProject)}` : '';
     const res = await fetch(`${API_BASE}/dashboard${query}`, {
-      headers: { 'X-User-ID': state.currentUser.id.toString() }
+      headers: { 'X-User-ID': (state.currentUser?.id || '1').toString() }
     });
-    const d = await res.json();
-    const role = state.currentUser.role;
+    const d = res.ok ? await res.json() : {};
+    const role = state.currentUser ? state.currentUser.role : 'itsm_read';
 
     const projectSet = new Set();
     if (state.projects) state.projects.forEach(p => projectSet.add(p.name));
     userProjects.forEach(p => projectSet.add(p));
-    if (d.selected_project) projectSet.add(d.selected_project.name);
+    if (d && d.selected_project) projectSet.add(d.selected_project.name);
     const availableProjects = [...projectSet].filter(Boolean).sort();
+
+    const um = (d && d.user_metrics) ? d.user_metrics : { my_open_tickets: 0, my_pending_tickets: 0, my_resolved_tickets: 0 };
+    const summ = (d && d.summary) ? d.summary : {
+      open_incidents: 0, p1_incidents: 0, p2_incidents: 0,
+      sla_compliance_pct: 100, mttr_hours: 0, mtta_minutes: 0
+    };
+    const team = (d && Array.isArray(d.team_workload)) ? d.team_workload : [];
+    const appBreakdown = (d && Array.isArray(d.incidents_by_application)) ? d.incidents_by_application : [];
+    const recentIncs = (d && Array.isArray(d.recent_incidents)) ? d.recent_incidents : [];
 
     let contentHtml = '';
 
-    if (role === 'employee') {
+    if (role === 'employee' || role === 'itsm_read' || isUserEndUser(state.currentUser)) {
       // Requester Dashboard
       contentHtml = `
         <div class="space-y-6">
@@ -1242,21 +1324,21 @@ async function renderDashboardView(container, options = {}) {
                 <span>My Open Tickets</span>
                 <i data-lucide="inbox" class="w-4 h-4 text-purple-500"></i>
               </div>
-              <div class="text-3xl font-black mt-2 text-purple-600">${d.user_metrics.my_open_tickets}</div>
+              <div class="text-3xl font-black mt-2 text-purple-600">${um.my_open_tickets || 0}</div>
             </div>
             <div class="p-5 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase">
                 <span>Pending Action</span>
                 <i data-lucide="clock" class="w-4 h-4 text-amber-500"></i>
               </div>
-              <div class="text-3xl font-black mt-2 text-amber-600">${d.user_metrics.my_pending_tickets}</div>
+              <div class="text-3xl font-black mt-2 text-amber-600">${um.my_pending_tickets || 0}</div>
             </div>
             <div class="p-5 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase">
                 <span>Resolved Tickets</span>
                 <i data-lucide="check-circle" class="w-4 h-4 text-emerald-500"></i>
               </div>
-              <div class="text-3xl font-black mt-2 text-emerald-600">${d.user_metrics.my_resolved_tickets}</div>
+              <div class="text-3xl font-black mt-2 text-emerald-600">${um.my_resolved_tickets || 0}</div>
             </div>
           </div>
 
@@ -1316,27 +1398,27 @@ async function renderDashboardView(container, options = {}) {
           <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-slate-400 font-medium">Open Incidents</div>
-              <div class="text-2xl font-black mt-1 text-[var(--text-primary)]">${d.summary.open_incidents}</div>
+              <div class="text-2xl font-black mt-1 text-[var(--text-primary)]">${summ.open_incidents || 0}</div>
             </div>
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-red-500 font-bold">P1 Critical Active</div>
-              <div class="text-2xl font-black mt-1 text-red-600">${d.summary.p1_incidents}</div>
+              <div class="text-2xl font-black mt-1 text-red-600">${summ.p1_incidents || 0}</div>
             </div>
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-amber-500 font-bold">P2 High Active</div>
-              <div class="text-2xl font-black mt-1 text-amber-600">${d.summary.p2_incidents}</div>
+              <div class="text-2xl font-black mt-1 text-amber-600">${summ.p2_incidents || 0}</div>
             </div>
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-emerald-600 font-bold">SLA Compliance</div>
-              <div class="text-2xl font-black mt-1 text-emerald-600">${d.summary.sla_compliance_pct}%</div>
+              <div class="text-2xl font-black mt-1 text-emerald-600">${summ.sla_compliance_pct || 100}%</div>
             </div>
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-slate-400 font-medium">Mean Time to Resolve</div>
-              <div class="text-2xl font-black mt-1 text-indigo-600">${d.summary.mttr_hours}h</div>
+              <div class="text-2xl font-black mt-1 text-indigo-600">${summ.mttr_hours || 0}h</div>
             </div>
             <div class="p-4 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm">
               <div class="text-xs text-slate-400 font-medium">Mean Response Time</div>
-              <div class="text-2xl font-black mt-1 text-purple-600">${d.summary.mtta_minutes}m</div>
+              <div class="text-2xl font-black mt-1 text-purple-600">${summ.mtta_minutes || 0}m</div>
             </div>
           </div>
 
@@ -1349,7 +1431,7 @@ async function renderDashboardView(container, options = {}) {
                 <span class="text-[11px] text-slate-400">Live Active Tickets</span>
               </div>
               <div class="space-y-3">
-                ${d.team_workload.map(eng => `
+                ${team.length ? team.map(eng => `
                   <div>
                     <div class="flex items-center justify-between text-xs mb-1">
                       <span class="font-semibold">${eng.engineer_name}</span>
@@ -1359,7 +1441,7 @@ async function renderDashboardView(container, options = {}) {
                       <div class="bg-purple-600 h-2 rounded-full" style="width: ${Math.min(100, eng.active_tickets * 15)}%"></div>
                     </div>
                   </div>
-                `).join('')}
+                `).join('') : '<p class="text-xs text-slate-400 py-3">No active queue load</p>'}
               </div>
             </div>
 
@@ -1381,12 +1463,12 @@ async function renderDashboardView(container, options = {}) {
                 <span class="text-[11px] text-slate-400">Services</span>
               </div>
               <div class="space-y-2 text-xs">
-                ${d.incidents_by_application.map(app => `
+                ${appBreakdown.length ? appBreakdown.map(app => `
                   <div class="flex items-center justify-between p-2 rounded bg-[var(--bg-tertiary)]">
                     <span class="font-medium">${app.name}</span>
                     <span class="font-bold px-2 py-0.5 rounded bg-purple-500/10 text-purple-600">${app.count}</span>
                   </div>
-                `).join('')}
+                `).join('') : '<p class="text-xs text-slate-400 py-3">No applications registered</p>'}
               </div>
             </div>
           </div>
@@ -1411,7 +1493,7 @@ async function renderDashboardView(container, options = {}) {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-[var(--border-color)]">
-                  ${d.recent_incidents.map(i => `
+                  ${recentIncs.length ? recentIncs.map(i => `
                     <tr class="hover:bg-[var(--bg-tertiary)] transition-colors">
                       <td class="p-3 font-bold text-purple-600">
                         <a href="#/incidents/${i.number}">${i.number}</a>
@@ -1429,7 +1511,7 @@ async function renderDashboardView(container, options = {}) {
                         <a href="#/incidents/${i.number}" class="text-purple-600 hover:underline font-semibold">View</a>
                       </td>
                     </tr>
-                  `).join('')}
+                  `).join('') : '<tr><td colspan="7" class="p-6 text-center text-slate-400 font-semibold">No recent incidents recorded. System running clear.</td></tr>'}
                 </tbody>
               </table>
             </div>

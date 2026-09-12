@@ -52,7 +52,9 @@ app.add_middleware(
 async def itsm_subpath_middleware(request: Request, call_next):
     path = request.scope.get("path", "")
     if path == "/itsm":
-        request.scope["path"] = "/"
+        qs = request.scope.get("query_string", b"").decode("utf-8")
+        target_url = "/itsm/" + (f"?{qs}" if qs else "")
+        return RedirectResponse(url=target_url, status_code=307)
     elif path.startswith("/itsm/"):
         request.scope["path"] = path[len("/itsm"):]
     response = await call_next(request)
@@ -288,8 +290,13 @@ def delete_application_alias(
     return delete_application(application_id=application_id, db=db, current_user=current_user)
 
 
-@app.get("/")
 @app.get("/itsm")
+def serve_itsm_redirect(request: Request):
+    qs = request.url.query
+    return RedirectResponse(url=f"/itsm/{'?' + qs if qs else ''}", status_code=307)
+
+
+@app.get("/")
 @app.get("/itsm/")
 def serve_index():
     index_path = os.path.join(frontend_dir, "index.html")
