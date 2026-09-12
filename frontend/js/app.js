@@ -96,13 +96,47 @@ function detectExternalAuthToken() {
   return '';
 }
 
+// Global Application State (declared early with var to eliminate TDZ issues)
+var _storedUser = null;
+try {
+  var _rawStored = typeof localStorage !== 'undefined' ? localStorage.getItem('current_user') : null;
+  if (_rawStored) _storedUser = JSON.parse(_rawStored);
+} catch (_) {}
+
+var state = {
+  currentUser: _storedUser || {
+    id: 1,
+    username: 'admin',
+    full_name: 'Admin User',
+    role: 'itsm_admin',
+    is_global_admin: true,
+    is_end_user: false,
+    admin_projects: [],
+    support_projects: [],
+    custom_groups: []
+  },
+  allUsers: [],
+  allAssignmentGroups: [],
+  currentRoute: 'dashboard',
+  routeParams: {},
+  activeTicketContext: null,
+  activeAiConversationId: null,
+  notifications: [],
+  unreadCount: 0,
+  theme: (typeof localStorage !== 'undefined' && localStorage.getItem('nexus_theme')) || 'light',
+  currentTimezone: (typeof localStorage !== 'undefined' && localStorage.getItem('nexus_timezone')) || 'UTC',
+  projects: [],
+  applications: []
+};
+if (typeof window !== 'undefined') window.state = state;
+
 // Global fetch interceptor: automatically attaches Bearer token & X-User-ID to all API calls
 if (typeof window !== 'undefined' && window.fetch) {
   const _rawFetch = window.fetch.bind(window);
   window.fetch = function(resource, init) {
     init = init || {};
     const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || detectExternalAuthToken();
-    const currentId = (typeof state !== 'undefined' && state.currentUser && state.currentUser.id)
+    const currentId = (state && state.currentUser && state.currentUser.id)
       ? state.currentUser.id.toString()
       : (localStorage.getItem('nexus_user_id') || '1');
     
@@ -145,31 +179,6 @@ function updateBackendStatus(connected, message) {
   }
 }
 
-const state = {
-  currentUser: {
-    id: 1,
-    username: 'admin',
-    full_name: 'Admin User',
-    role: 'itsm_admin',
-    is_global_admin: true,
-    is_end_user: false,
-    admin_projects: [],
-    support_projects: [],
-    custom_groups: []
-  },
-  allUsers: [],
-  allAssignmentGroups: [],
-  currentRoute: 'dashboard',
-  routeParams: {},
-  activeTicketContext: null,
-  activeAiConversationId: null,
-  notifications: [],
-  unreadCount: 0,
-  theme: localStorage.getItem('nexus_theme') || 'light',
-  currentTimezone: localStorage.getItem('nexus_timezone') || 'UTC',
-  projects: [],
-  applications: []
-};
 
 const SUPPORTED_TIMEZONES = [
   { value: 'UTC', label: 'UTC (Coordinated Universal Time)' },
@@ -557,47 +566,31 @@ async function initApp() {
   initTheme();
   setupGlobalSearch();
 
-  try {
-    await initSso();
-  } catch (err) {
-    console.warn('SSO check skipped:', err);
-  }
-
-  try {
-    await loadCurrentUser();
-  } catch (err) {
-    console.warn('Current user load skipped:', err);
-  }
-
-  try {
-    await loadAllUsers();
-  } catch (err) {
-    console.warn('All users load skipped:', err);
-  }
-
-  try {
-    const grpRes = await fetch(`${API_BASE}/assignment-groups`);
-    if (grpRes.ok) state.allAssignmentGroups = await grpRes.json();
-  } catch (err) {
-    console.warn('Assignment groups load skipped:', err);
-  }
-
-  try {
-    const [projRes, appRes] = await Promise.allSettled([
-      fetch(`${API_BASE}/projects`),
-      fetch(`${API_BASE}/applications`)
-    ]);
-    if (projRes.status === 'fulfilled' && projRes.value.ok) state.projects = await projRes.value.json();
-    if (appRes.status === 'fulfilled' && appRes.value.ok) state.applications = await appRes.value.json();
-  } catch (err) {
-    console.warn('Projects or applications preload skipped:', err);
-  }
-
+  // 1. Initialize router and render initial view immediately
   initRouter();
   updateNavVisibilityForRole();
   safeCreateIcons();
+
+  // 2. Asynchronously load user session from backend and refresh UI
+  loadCurrentUser().then(() => {
+    updateNavVisibilityForRole();
+    safeCreateIcons();
+    if (typeof handleRoute === 'function') handleRoute();
+  }).catch(err => {
+    console.warn('Current user load note:', err);
+  });
+
+  // 3. Setup notifications
   loadNotifications();
   setInterval(loadNotifications, 30000);
+
+  // 4. Background non-blocking preloads for faster dropdown interactions
+  Promise.allSettled([
+    loadAllUsers(),
+    fetch(`${API_BASE}/assignment-groups`).then(r => r.ok ? r.json() : []).then(g => { state.allAssignmentGroups = g; }),
+    fetch(`${API_BASE}/projects`).then(r => r.ok ? r.json() : []).then(p => { state.projects = p; }),
+    fetch(`${API_BASE}/applications`).then(r => r.ok ? r.json() : []).then(a => { state.applications = a; })
+  ]).catch(err => console.warn('Background preload note:', err));
 }
 
 if (document.readyState === 'loading') {
@@ -1083,10 +1076,26 @@ function handleRoute() {
     }
   } catch (routeErr) {
     console.error('Error rendering route ' + state.currentRoute + ':', routeErr);
-    if (isEndUser) {
-      renderUnifiedTicketsView(app, { myTickets: true });
-    } else {
-      renderDashboardView(app);
+    try {
+      if (isEndUser) {
+        renderUnifiedTicketsView(app, { myTickets: true });
+      } else {
+        renderDashboardView(app);
+      }
+    } catch (fallbackErr) {
+      console.error('Fallback render error:', fallbackErr);
+      app.innerHTML = `
+        <div class="p-8 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] text-center space-y-3">
+          <i data-lucide="inbox" class="w-10 h-10 text-purple-500 mx-auto"></i>
+          <div class="font-bold text-base text-[var(--text-primary)]">GenWizard ITSM Portal</div>
+          <p class="text-xs text-slate-400">Loading initial console view...</p>
+          <div class="pt-2">
+            <button onclick="window.location.hash='#/tickets'; if (typeof renderUnifiedTicketsView==='function') renderUnifiedTicketsView(document.getElementById('mainApp'))" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow">
+              Open Unified Tickets
+            </button>
+          </div>
+        </div>
+      `;
     }
   }
   safeCreateIcons();
