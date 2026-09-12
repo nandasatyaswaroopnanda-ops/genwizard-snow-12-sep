@@ -252,19 +252,13 @@ fi
 echo "==> Starting Genwizard ITSM Core container on network '${DOCKER_NETWORK}'..."
 COMPOSE_OK=false
 
-if docker image inspect nexus-itsm-core:latest >/dev/null 2>&1; then
-  echo "  ✓ Detected nexus-itsm-core:latest in local daemon. Starting container..."
-  if docker compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d 2>&1; then
-    COMPOSE_OK=true
-  fi
-fi
-
-if [[ "$COMPOSE_OK" != "true" ]]; then
-  if docker compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d --build 2>&1; then
-    COMPOSE_OK=true
-  elif command -v docker-compose >/dev/null 2>&1 && docker-compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d --build 2>&1; then
-    COMPOSE_OK=true
-  fi
+echo "  -> Building and starting nexus-itsm-core container with latest static assets..."
+if docker compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d --build 2>&1; then
+  COMPOSE_OK=true
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d --build 2>&1; then
+  COMPOSE_OK=true
+elif docker compose -f "$APP_DIR/docker-compose.existing-app-addon.yml" up -d 2>&1; then
+  COMPOSE_OK=true
 fi
 
 # Resilient fallback: direct docker run on verified network with host-gateway and volume
