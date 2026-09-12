@@ -364,14 +364,14 @@ def get_current_user(
     if credentials and credentials.credentials:
         token = credentials.credentials
     elif request:
-        cookie_keys = ["auth_token", "access_token", "token", "jwt", "im_token", "atr_token", "short_token", "id_token", "sessionId", "JSESSIONID"]
+        cookie_keys = ["auth_token", "access_token", "token", "jwt", "im_token", "atr_token", "short_token", "id_token", "sessionId", "JSESSIONID", "keycloak-token", "kc-token", "KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION", "sso_token", "user_token"]
         for ck in cookie_keys:
             cval = request.cookies.get(ck)
             if cval:
                 token = cval
                 break
         if not token:
-            header_keys = ["x-access-token", "x-auth-token", "x-token", "im-token", "atr-token"]
+            header_keys = ["x-access-token", "x-auth-token", "x-token", "im-token", "atr-token", "keycloak-token"]
             for hk in header_keys:
                 hval = request.headers.get(hk)
                 if hval:
@@ -555,7 +555,7 @@ def get_current_user(
 
             return user
 
-    # 3. Check for external IM proxy headers (X-User-Name, X-Remote-User, X-Forwarded-User, Remote-User, etc.)
+    # 3. Check for external IM proxy headers and cookies (X-User-Name, X-Remote-User, X-Forwarded-User, Remote-User, etc.)
     ext_username = (
         (request.headers.get("x-user-name") or
          request.headers.get("x-remote-user") or
@@ -563,12 +563,17 @@ def get_current_user(
          request.headers.get("remote-user") or
          request.headers.get("x-authenticated-user") or
          request.headers.get("x-webauth-user") or
+         request.cookies.get("username") or
+         request.cookies.get("user") or
+         request.cookies.get("im_user") or
          x_user_name or x_remote_user or "") if request else (x_user_name or x_remote_user or "")
     ).strip()
     ext_email = (
         (request.headers.get("x-user-email") or
          request.headers.get("x-forwarded-email") or
          request.headers.get("x-authenticated-email") or
+         request.cookies.get("user_email") or
+         request.cookies.get("email") or
          x_user_email or "") if request else (x_user_email or "")
     ).strip().lower()
     if ext_username or ext_email:
@@ -579,9 +584,12 @@ def get_current_user(
             user = db.query(User).filter(User.email.ilike(ext_email)).first()
         if not user and ext_username:
             # Auto-provision user from external IM
+            display_name = ext_username.replace(".", " ").title()
+            if request and request.headers.get("x-user-fullname"):
+                display_name = request.headers.get("x-user-fullname").strip()
             user = User(
                 username=ext_username,
-                full_name=ext_username.replace(".", " ").title(),
+                full_name=display_name,
                 email=ext_email if ext_email else f"{ext_username}@enterprise.corp",
                 role="itsm_read",
                 active=True

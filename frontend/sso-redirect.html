@@ -162,7 +162,7 @@
 
       <!-- Actions / Fast Launch -->
       <div class="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-        <button id="directLaunchBtn" onclick="finishAndRedirect()" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-lg transition-all flex items-center justify-center space-x-2">
+        <button id="directLaunchBtn" class="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs px-6 py-2.5 rounded-xl shadow-lg transition-all flex items-center justify-center space-x-2">
           <span>Launch Dashboard</span>
           <i data-lucide="arrow-right" class="w-4 h-4"></i>
         </button>
@@ -180,19 +180,19 @@
         <span class="text-[10px] text-purple-400 font-mono">Dev / Enterprise Demo</span>
       </div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-        <button onclick="runSimulation('eso')" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
+        <button data-sim="eso" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
           <div class="font-bold text-purple-200">Enterprise ESO</div>
           <div class="text-[10px] text-slate-400">App ID · Admin Claim</div>
         </button>
-        <button onclick="runSimulation('azure')" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
+        <button data-sim="azure" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
           <div class="font-bold text-blue-300">Microsoft Azure AD</div>
           <div class="text-[10px] text-slate-400">Groups · Database Supp.</div>
         </button>
-        <button onclick="runSimulation('keycloak')" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
+        <button data-sim="keycloak" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
           <div class="font-bold text-cyan-300">Keycloak OIDC</div>
           <div class="text-[10px] text-slate-400">realm_access · Servicedesk</div>
         </button>
-        <button onclick="runSimulation('b2b')" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
+        <button data-sim="b2b" class="p-2 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-800/50 text-left transition-colors">
           <div class="font-bold text-pink-300">B2B / B2C Partner</div>
           <div class="text-[10px] text-slate-400">Partner Readonly Claim</div>
         </button>

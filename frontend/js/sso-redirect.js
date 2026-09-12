@@ -15,6 +15,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   setupProviderDisplay(targetProvider);
   startSSOProcessing();
+
+  const launchBtn = document.getElementById('directLaunchBtn');
+  if (launchBtn) {
+    launchBtn.addEventListener('click', finishAndRedirect);
+  }
+
+  document.querySelectorAll('button[data-sim]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      runSimulation(btn.getAttribute('data-sim'));
+    });
+  });
 });
 
 function setupProviderDisplay(pType) {
@@ -191,8 +202,14 @@ function finishAndRedirect() {
   const isSubpath = window.location.pathname.startsWith('/itsm');
   if (authPayload && authPayload.access_token) {
     localStorage.setItem('auth_token', authPayload.access_token);
+    localStorage.setItem('access_token', authPayload.access_token);
     localStorage.setItem('current_user', JSON.stringify(authPayload.user));
-    localStorage.setItem('active_user_id', authPayload.user.id);
+    localStorage.setItem('sso_user', JSON.stringify(authPayload.user));
+    localStorage.setItem('active_user_id', String(authPayload.user.id));
+    localStorage.setItem('nexus_user_id', String(authPayload.user.id));
+    if (authPayload.user.username) {
+      localStorage.setItem('sso_username', authPayload.user.username);
+    }
   }
   window.location.href = isSubpath ? '/itsm/#dashboard' : '/#dashboard';
 }

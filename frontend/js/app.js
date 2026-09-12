@@ -51,7 +51,7 @@ function detectExternalAuthToken() {
     }
 
     // 2. LocalStorage keys used by external Identity Management frontends
-    const storageKeys = ['auth_token', 'access_token', 'accessToken', 'token', 'jwt', 'id_token', 'im_token', 'user_token'];
+    const storageKeys = ['auth_token', 'access_token', 'accessToken', 'token', 'jwt', 'id_token', 'im_token', 'user_token', 'keycloak-token', 'kc-token', 'KEYCLOAK_TOKEN', 'sso_token'];
     for (const k of storageKeys) {
       const val = localStorage.getItem(k);
       if (val && typeof val === 'string' && val.length > 8) {
@@ -68,7 +68,7 @@ function detectExternalAuthToken() {
     }
 
     // 4. Nested tokens in user objects in localStorage/sessionStorage
-    for (const uKey of ['user', 'currentUser', 'current_user', 'auth', 'im_user']) {
+    for (const uKey of ['sso_user', 'user', 'currentUser', 'current_user', 'userInfo', 'auth', 'im_user']) {
       const raw = localStorage.getItem(uKey) || sessionStorage.getItem(uKey);
       if (raw) {
         try {
@@ -83,7 +83,7 @@ function detectExternalAuthToken() {
 
     // 5. Browser cookies
     if (typeof document !== 'undefined' && document.cookie) {
-      const m = document.cookie.match(/(?:^|;\s*)(?:auth_token|access_token|token|jwt|im_token|atr-token|Authorization|SESSION)=([^;]+)/i);
+      const m = document.cookie.match(/(?:^|;\s*)(?:auth_token|access_token|token|jwt|im_token|atr-token|Authorization|SESSION|keycloak-token|kc-token|KEYCLOAK_IDENTITY|KEYCLOAK_SESSION)=([^;]+)/i);
       if (m && m[1]) {
         let cookieVal = decodeURIComponent(m[1].trim());
         if (cookieVal.toLowerCase().startsWith('bearer ')) cookieVal = cookieVal.substring(7).trim();
@@ -568,9 +568,35 @@ async function initSso() {
 }
 
 // --- INITIALIZATION ---
+function setupHeaderButtons() {
+  const map = {
+    'headerCreateTicketBtn': () => openCreateModal(),
+    'sidebarCreateTicketBtn': () => openCreateModal(),
+    'userSwitcherBtn': () => toggleUserDropdown(),
+    'notificationBellBtn': () => toggleNotificationPanel(),
+    'markAllReadBtn': () => markAllNotificationsRead(),
+    'themeToggleBtn': () => toggleTheme(),
+    'floatingAiBtn': () => toggleFloatingAiDrawer(),
+    'drawerNewChatBtn': () => startNewDrawerChat(),
+    'drawerCloseBtn': () => toggleFloatingAiDrawer()
+  };
+  for (const [id, fn] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn);
+  }
+  const drawerForm = document.getElementById('drawerForm');
+  if (drawerForm) {
+    drawerForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitDrawerQuestion(e);
+    });
+  }
+}
+
 async function initApp() {
   initTheme();
   setupGlobalSearch();
+  setupHeaderButtons();
 
   // 1. Initialize router and render initial view immediately
   initRouter();
@@ -631,39 +657,72 @@ async function loadCurrentUser() {
     localStorage.setItem('auth_token', authToken);
   }
 
-  const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id') || '1';
-  const headers = { 'X-User-ID': savedUserId };
+  // 1. Resolve stored SSO or external Identity Management user
+  let ssoUser = null;
+  const userKeys = ['sso_user', 'current_user', 'user', 'currentUser', 'userInfo', 'im_user'];
+  for (const k of userKeys) {
+    try {
+      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (raw) {
+        const u = JSON.parse(raw);
+        if (u && (u.username || u.name || u.full_name)) {
+          ssoUser = u;
+          break;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (ssoUser) {
+    state.currentUser = ssoUser;
+    updateUserUI();
+  }
+
+  // 2. Build headers without defaulting to X-User-ID: 1 when SSO or token is active
+  const headers = {};
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  // If stored current_user exists from external IM login, seed initial state
-  const storedUserJson = localStorage.getItem('current_user');
-  if (storedUserJson) {
-    try {
-      const parsed = JSON.parse(storedUserJson);
-      if (parsed && (parsed.username || parsed.name || parsed.full_name)) {
-        state.currentUser = parsed;
-        updateUserUI();
-      }
-    } catch (e) {}
+  if (ssoUser) {
+    if (ssoUser.id) headers['X-User-ID'] = String(ssoUser.id);
+    if (ssoUser.username) headers['X-User-Name'] = ssoUser.username;
+    if (ssoUser.email) headers['X-User-Email'] = ssoUser.email;
+  } else {
+    const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id');
+    if (savedUserId && savedUserId !== '1') {
+      headers['X-User-ID'] = savedUserId;
+    } else if (!authToken) {
+      headers['X-User-ID'] = savedUserId || '1';
+    }
   }
 
   try {
     const res = await fetch(`${API_BASE}/auth/current`, { headers });
     if (res.ok) {
-      state.currentUser = await res.json();
-      localStorage.setItem('current_user', JSON.stringify(state.currentUser));
-      if (state.currentUser && state.currentUser.id) {
-        localStorage.setItem('nexus_user_id', String(state.currentUser.id));
+      const backendUser = await res.json();
+      if (backendUser && (backendUser.username || backendUser.full_name)) {
+        state.currentUser = backendUser;
+        localStorage.setItem('current_user', JSON.stringify(state.currentUser));
+        if (state.currentUser.id) {
+          localStorage.setItem('nexus_user_id', String(state.currentUser.id));
+        }
+        updateUserUI();
       }
-      updateUserUI();
       updateBackendStatus(true, 'Backend Online');
     } else {
+      if (ssoUser) {
+        state.currentUser = ssoUser;
+        updateUserUI();
+      }
       updateBackendStatus(false, 'API Connected (Guest)');
     }
   } catch (err) {
     console.warn('Current user load note:', err.message);
+    if (ssoUser) {
+      state.currentUser = ssoUser;
+      updateUserUI();
+    }
     updateBackendStatus(false, 'Backend Offline');
   }
 }

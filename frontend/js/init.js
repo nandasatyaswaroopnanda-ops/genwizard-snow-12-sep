@@ -15,7 +15,254 @@
   document.head.appendChild(b);
 })();
 
-// 2. Safe Lucide icon renderer
+// 2. Early SSO User Detection & Immediate Header Population (prevents "Admin User" flash)
+(function initEarlyUserInfo() {
+  try {
+    var raw = localStorage.getItem('sso_user') || localStorage.getItem('current_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo');
+    if (raw) {
+      var u = JSON.parse(raw);
+      if (u && (u.full_name || u.name || u.username)) {
+        var displayName = u.full_name || u.name || (u.username ? u.username.replace('.', ' ') : 'User');
+        document.addEventListener('DOMContentLoaded', function() {
+          var nameEl = document.getElementById('userName');
+          var avatarEl = document.getElementById('userAvatar');
+          if (nameEl && displayName) nameEl.textContent = displayName;
+          if (avatarEl && displayName) {
+            var initials = displayName.split(' ').filter(Boolean).map(function(s) { return s[0]; }).join('').toUpperCase().slice(0, 2) || 'U';
+            avatarEl.textContent = initials;
+          }
+        });
+      }
+    }
+  } catch (_) {}
+})();
+
+// 3. Form Field Auto-Labeler (eliminates "A form field does not have a label associated with it" warnings)
+function ensureFormFieldLabels(root) {
+  if (!root || !root.querySelectorAll) return;
+  try {
+    var fields = root.querySelectorAll('input, select, textarea');
+    for (var i = 0; i < fields.length; i++) {
+      var el = fields[i];
+      if (el.type === 'hidden') continue;
+      if (!el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby')) {
+        var id = el.id;
+        var hasLabel = false;
+        if (id) {
+          hasLabel = !!document.querySelector('label[for="' + id + '"]');
+        }
+        if (!hasLabel && el.closest('label')) {
+          hasLabel = true;
+        }
+        if (!hasLabel) {
+          var labelText = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || 'Form input';
+          el.setAttribute('aria-label', labelText);
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  ensureFormFieldLabels(document);
+  try {
+    var observer = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        if (m.addedNodes && m.addedNodes.length > 0) {
+          for (var j = 0; j < m.addedNodes.length; j++) {
+            var node = m.addedNodes[j];
+            if (node.nodeType === 1) {
+              ensureFormFieldLabels(node);
+            }
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  } catch (_) {}
+});
+
+// 4. Content Security Policy (CSP) innerHTML Sanitizer:
+// Converts any dynamic onclick/onsubmit/onchange into data-click/data-submit/data-change
+// so browsers never block inline scripts or throw CSP inline execution violations.
+(function installCspHtmlSanitizer() {
+  function sanitizeHtmlForCSP(html) {
+    if (typeof html !== 'string' || html.indexOf('on') === -1) return html;
+    return html
+      .replace(/\sonclick\s*=\s*(["'])([\s\S]*?)\1/gi, ' data-click=$1$2$1')
+      .replace(/\sonsubmit\s*=\s*(["'])([\s\S]*?)\1/gi, ' data-submit=$1$2$1')
+      .replace(/\sonchange\s*=\s*(["'])([\s\S]*?)\1/gi, ' data-change=$1$2$1')
+      .replace(/\sonkeyup\s*=\s*(["'])([\s\S]*?)\1/gi, ' data-keyup=$1$2$1');
+  }
+
+  try {
+    var desc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (desc && desc.set) {
+      Object.defineProperty(Element.prototype, 'innerHTML', {
+        set: function(val) {
+          return desc.set.call(this, typeof val === 'string' ? sanitizeHtmlForCSP(val) : val);
+        },
+        get: function() {
+          return desc.get.call(this);
+        },
+        configurable: true,
+        enumerable: true
+      });
+    }
+  } catch (_) {}
+})();
+
+// 5. Universal Delegated Event Dispatcher (guarantees all clicks & form submissions execute even under strict CSP)
+(function installDelegatedEventDispatcher() {
+  function parseArgs(rawArgs, evt) {
+    if (!rawArgs) return [];
+    if (rawArgs === 'event') return [evt];
+    try {
+      var jsonStr = '[' + rawArgs.replace(/\bevent\b/g, 'null') + ']';
+      return JSON.parse(jsonStr);
+    } catch (_) {
+      var args = [];
+      var regex = /(?:'([^']*)'|"([^"]*)"|(\d+(?:\.\d+)?)|(true|false|null|undefined)|([^,]+))/g;
+      var m;
+      while ((m = regex.exec(rawArgs)) !== null) {
+        if (m[1] !== undefined) args.push(m[1]);
+        else if (m[2] !== undefined) args.push(m[2]);
+        else if (m[3] !== undefined) args.push(Number(m[3]));
+        else if (m[4] === 'true') args.push(true);
+        else if (m[4] === 'false') args.push(false);
+        else if (m[4] === 'null') args.push(null);
+        else if (m[4] === 'undefined') args.push(undefined);
+        else if (m[5] !== undefined) {
+          var val = m[5].trim();
+          if (val === 'event') args.push(evt);
+          else args.push(val);
+        }
+      }
+      return args;
+    }
+  }
+
+  function dispatchAction(actionStr, targetEl, evt) {
+    if (!actionStr || typeof actionStr !== 'string') return;
+    actionStr = actionStr.trim();
+    if (!actionStr) return;
+
+    // Special quick prompts
+    if (actionStr === 'sendQuickPrompt' && targetEl.getAttribute('data-prompt')) {
+      if (typeof window.sendQuickPrompt === 'function') {
+        window.sendQuickPrompt(targetEl.getAttribute('data-prompt'));
+        return;
+      }
+    }
+
+    // Function call: fn(args...)
+    var fnMatch = actionStr.match(/^([a-zA-Z0-9_$]+)\(([\s\S]*)\)$/);
+    if (fnMatch) {
+      var fnName = fnMatch[1];
+      var rawArgs = fnMatch[2].trim();
+      var fn = window[fnName];
+      if (typeof fn === 'function') {
+        if (!rawArgs) {
+          fn.call(targetEl);
+          return;
+        }
+        var args = parseArgs(rawArgs, evt);
+        fn.apply(targetEl, args);
+        return;
+      }
+    }
+
+    // Plain function name without parens
+    if (typeof window[actionStr] === 'function') {
+      window[actionStr].call(targetEl);
+      return;
+    }
+
+    // Common DOM actions
+    if (actionStr.indexOf('modalContainer') !== -1 && actionStr.indexOf("=''") !== -1) {
+      var mc = document.getElementById('modalContainer');
+      if (mc) mc.innerHTML = '';
+      return;
+    }
+    if (actionStr.indexOf('searchDropdown') !== -1 && actionStr.indexOf('hidden') !== -1) {
+      var sd = document.getElementById('searchDropdown');
+      if (sd) sd.classList.add('hidden');
+      return;
+    }
+    if (actionStr.indexOf('nodeDetailBox') !== -1 && actionStr.indexOf('hidden') !== -1) {
+      var nb = document.getElementById('nodeDetailBox');
+      if (nb) nb.classList.add('hidden');
+      return;
+    }
+    if (actionStr.indexOf('csvFileInput') !== -1 && actionStr.indexOf('click()') !== -1) {
+      var cf = document.getElementById('csvFileInput');
+      if (cf) cf.click();
+      return;
+    }
+    if (actionStr.indexOf('window.location.hash=') === 0) {
+      var hashVal = actionStr.split('=')[1].replace(/['"]/g, '').trim();
+      window.location.hash = hashVal;
+      return;
+    }
+
+    // Safe execution fallback if Function constructor permitted
+    try {
+      var execFn = new Function('event', 'target', actionStr);
+      execFn.call(targetEl, evt, targetEl);
+    } catch (_) {}
+  }
+
+  // Delegated Click Listener
+  document.addEventListener('click', function(e) {
+    var el = e.target.closest('[data-action], [data-click], [onclick]');
+    if (!el) return;
+    var action = el.getAttribute('data-action') || el.getAttribute('data-click') || el.getAttribute('onclick');
+    if (action) {
+      dispatchAction(action, el, e);
+    }
+  }, false);
+
+  // Delegated Submit Listener
+  document.addEventListener('submit', function(e) {
+    var form = e.target.closest('form');
+    if (!form) return;
+    if (form.id === 'drawerForm') {
+      e.preventDefault();
+      if (typeof window.submitDrawerQuestion === 'function') {
+        window.submitDrawerQuestion(e);
+      }
+      return;
+    }
+    var action = form.getAttribute('data-submit') || form.getAttribute('onsubmit');
+    if (action) {
+      e.preventDefault();
+      dispatchAction(action, form, e);
+    }
+  }, false);
+
+  // Delegated Change Listener
+  document.addEventListener('change', function(e) {
+    var el = e.target.closest('[data-change], [onchange]');
+    if (!el) return;
+    var action = el.getAttribute('data-change') || el.getAttribute('onchange');
+    if (action) {
+      dispatchAction(action, el, e);
+    }
+  }, false);
+
+  // Delegated Keyup Listener
+  document.addEventListener('keyup', function(e) {
+    var el = e.target.closest('[data-keyup], [onkeyup]');
+    if (!el) return;
+    var action = el.getAttribute('data-keyup') || el.getAttribute('onkeyup');
+    if (action) {
+      dispatchAction(action, el, e);
+    }
+  }, false);
+})();
+
+// 6. Safe Lucide icon renderer
 function safeRenderIcons() {
   try {
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
@@ -26,7 +273,7 @@ function safeRenderIcons() {
   }
 }
 
-// 3. Tailwind JIT Configuration
+// 7. Tailwind JIT Configuration
 window.tailwind = window.tailwind || {};
 window.tailwind.config = {
   darkMode: ['class', '[data-theme="dark"]'],
