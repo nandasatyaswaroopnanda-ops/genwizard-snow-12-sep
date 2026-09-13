@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
@@ -401,7 +401,7 @@ async def custom_swagger_ui_html(req: Request):
         prefix = ""
 
     openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
-    return get_swagger_ui_html(
+    res = get_swagger_ui_html(
         openapi_url=openapi_url,
         title="GenWizard Support Portal — Swagger UI & Automation",
         oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
@@ -416,6 +416,34 @@ async def custom_swagger_ui_html(req: Request):
             "docExpansion": "list"
         }
     )
+    # Hide topbar, schema URL badge, and any openapi.json / openai.json text
+    hide_schema_css = (
+        "<style>\n"
+        "  .swagger-ui .topbar { display: none !important; }\n"
+        "  .swagger-ui .info .link, .swagger-ui .info a[href*='openapi'], .swagger-ui .info a[href*='.json'], "
+        "  .swagger-ui .info hgroup.main a, .swagger-ui .info .url, .swagger-ui .info .info__code, "
+        "  .swagger-ui .info small a, .swagger-ui .info small { display: none !important; }\n"
+        "</style>\n"
+    )
+    clean_dom_script = (
+        "<script>\n"
+        "  window.addEventListener('DOMContentLoaded', () => {\n"
+        "    const removeOpenApiLabels = () => {\n"
+        "      document.querySelectorAll('.swagger-ui .info a, .swagger-ui .info span, .swagger-ui .info small').forEach(el => {\n"
+        "        const txt = (el.textContent || '').toLowerCase();\n"
+        "        if (txt.includes('openapi.json') || txt.includes('openai.json') || txt.endsWith('.json')) {\n"
+        "          el.remove();\n"
+        "        }\n"
+        "      });\n"
+        "    };\n"
+        "    removeOpenApiLabels();\n"
+        "    const obs = new MutationObserver(removeOpenApiLabels);\n"
+        "    obs.observe(document.body, { childList: true, subtree: true });\n"
+        "  });\n"
+        "</script>\n"
+    )
+    content = res.body.decode("utf-8").replace("</head>", f"{hide_schema_css}\n{clean_dom_script}\n</head>")
+    return HTMLResponse(content=content, status_code=res.status_code, headers=dict(res.headers))
 
 @app.get("/redoc", include_in_schema=False)
 @app.get("/itsm/redoc", include_in_schema=False)
@@ -424,12 +452,15 @@ async def custom_redoc_html(req: Request):
     path = req.url.path
     prefix = "/itsm" if path.startswith("/itsm") else root_path
     openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
-    return get_redoc_html(
+    res = get_redoc_html(
         openapi_url=openapi_url,
         title="GenWizard Support Portal — ReDoc",
         redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
         redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
     )
+    hide_redoc_css = "<style> a[href*='openapi.json'], button:has-text('Download') { display: none !important; } </style>\n"
+    content = res.body.decode("utf-8").replace("</head>", f"{hide_redoc_css}\n</head>")
+    return HTMLResponse(content=content, status_code=res.status_code, headers=dict(res.headers))
 
 @app.get("/itsm/openapi.json", include_in_schema=False)
 def get_itsm_openapi():
