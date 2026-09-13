@@ -4,7 +4,7 @@ from backend.mongo_dal import MongoSession, InMemoryDatabase
 from backend.models import (
     User, Application, Project, AssignmentGroup, GroupMember,
     ProjectAssignmentMapping, RoutingRule, BusinessCalendar,
-    SLAPolicy, SLAInstance, Incident, TicketWorkNote, TicketComment
+    SLAPolicy, SLAInstance, Incident, ServiceRequest, ChangeRequest, TicketWorkNote, TicketComment
 )
 from backend.routing_engine import RoutingEngine, calculate_priority
 from backend.sla_engine import SLAEngine
@@ -217,3 +217,138 @@ def test_ai_copilot_work_notes_synthesis(test_db):
     assert "Redis connection timeouts" in resp
     assert "Killed rogue PID 44102" in resp
     assert any(c["url"] == f"#/incidents/{inc.number}" for c in cites)
+
+def test_ai_copilot_summarize_change_and_request_with_comments_and_close_notes(test_db):
+    user = User(username="lead_dev", full_name="Lead Developer", role="support")
+    test_db.add(user)
+    test_db.flush()
+
+    # 1. Service Request with comments and work notes
+    req = ServiceRequest(
+        number="REQ0008888",
+        requested_by_id=user.id,
+        application_id=1,
+        project_id=1,
+        catalog_item="Database Access Provisioning",
+        short_description="Request read-replica access for analytics team",
+        description="Analytics team requires read-only user on replica.",
+        priority="P3",
+        assignment_group_id=1,
+        assigned_to_id=user.id,
+        status="In Progress"
+    )
+    test_db.add(req)
+    test_db.flush()
+
+    req_note = TicketWorkNote(
+        ticket_type="request",
+        ticket_id=req.id,
+        user_id=user.id,
+        note="Generated IAM temporary credentials with ReadOnlyAccess policy."
+    )
+    req_comm = TicketComment(
+        ticket_type="request",
+        ticket_id=req.id,
+        user_id=user.id,
+        comment="Please confirm if the credentials work from your bastion host."
+    )
+    test_db.add_all([req_note, req_comm])
+    test_db.flush()
+
+    resp_req, cites_req = EnterpriseKnowledgeFallback.generate_response(
+        f"summarize {req.number}",
+        db=test_db
+    )
+    assert "REQ0008888" in resp_req
+    assert "ReadOnlyAccess" in resp_req
+    assert "bastion host" in resp_req
+    assert any(c["url"] == f"#/service-requests/{req.number}" for c in cites_req)
+
+    # 2. Change Request with plans and closure notes
+    chg = ChangeRequest(
+        number="CHG0007777",
+        requested_by_id=user.id,
+        application_id=1,
+        project_id=1,
+        change_type="Normal",
+        short_description="Upgrade Redis cluster to v7.2",
+        description="Major version upgrade of caching infrastructure.",
+        business_justification="Security patches and performance optimization.",
+        priority="P2",
+        assignment_group_id=1,
+        assigned_to_id=user.id,
+        implementation_plan="1. Snapshot current dataset. 2. Failover to secondary. 3. Upgrade primary.",
+        backout_plan="Revert DNS pointer to v7.0 standby replica.",
+        test_plan="Execute smoke test suite against synthetic workload.",
+        closure_notes="Upgrade completed with 0 dropped packets. All telemetry nominal.",
+        change_status="Closed"
+    )
+    test_db.add(chg)
+    test_db.flush()
+
+    resp_chg, cites_chg = EnterpriseKnowledgeFallback.generate_response(
+        f"what was done for change {chg.number}",
+        db=test_db
+    )
+    assert "CHG0007777" in resp_chg
+    assert "Snapshot current dataset" in resp_chg
+    assert "standby replica" in resp_chg
+    assert "0 dropped packets" in resp_chg
+    assert any(c["url"] == f"#/change-requests/{chg.number}" for c in cites_chg)
+
+def test_ai_copilot_cross_project_similar_tickets_and_steps_taken(test_db):
+    user = User(username="sre_eng", full_name="SRE Engineer", role="admin")
+    test_db.add(user)
+    test_db.flush()
+
+    inc = Incident(
+        number="INC0005555",
+        caller_id=user.id,
+        application_id=1,
+        project_id=1,
+        short_description="Memory leak on ingestion workers",
+        description="Workers getting OOMKilled every 4 hours.",
+        priority="P1",
+        assignment_group_id=1,
+        assigned_to_id=user.id,
+        status="Resolved",
+        close_category="Bug",
+        resolution_notes="Patched unclosed file descriptor in streaming parser and increased heap limit to 2GB."
+    )
+    test_db.add(inc)
+    test_db.flush()
+
+    note = TicketWorkNote(
+        ticket_type="incident",
+        ticket_id=inc.id,
+        user_id=user.id,
+        note="Identified unclosed gzip streams. Applied hotfix commit #8839."
+    )
+    test_db.add(note)
+    test_db.flush()
+
+    resp, cites = EnterpriseKnowledgeFallback.generate_response(
+        "give similar tickets and steps taken across projects",
+        db=test_db
+    )
+    assert "Similar Resolved Tickets & Steps Taken" in resp
+    assert "INC0005555" in resp
+    assert "unclosed gzip streams" in resp or "unclosed file descriptor" in resp
+    assert len(cites) > 0
+
+def test_ai_copilot_generic_questions_knowledge():
+    resp_micro, cites_micro = EnterpriseKnowledgeFallback.generate_response(
+        "What is microservices architecture?"
+    )
+    assert "Microservices" in resp_micro
+    assert "Decentralized Data Management" in resp_micro
+    assert "API Gateways" in resp_micro
+    assert "kubectl" not in resp_micro
+
+    resp_oauth, cites_oauth = EnterpriseKnowledgeFallback.generate_response(
+        "Explain OAuth 2.0 authorization framework"
+    )
+    assert "OAuth 2.0" in resp_oauth
+    assert "Authorization Code Flow" in resp_oauth
+    assert "Access Token" in resp_oauth
+    assert "kubectl" not in resp_oauth

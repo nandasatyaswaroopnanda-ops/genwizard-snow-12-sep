@@ -617,15 +617,15 @@ async function initSso() {
 // --- INITIALIZATION ---
 function setupHeaderButtons() {
   const map = {
-    'headerCreateTicketBtn': () => openCreateModal(),
-    'sidebarCreateTicketBtn': () => openCreateModal(),
-    'userSwitcherBtn': () => toggleUserDropdown(),
-    'notificationBellBtn': () => toggleNotificationPanel(),
-    'markAllReadBtn': () => markAllNotificationsRead(),
-    'themeToggleBtn': () => toggleTheme(),
-    'floatingAiBtn': () => toggleFloatingAiDrawer(),
-    'drawerNewChatBtn': () => startNewDrawerChat(),
-    'drawerCloseBtn': () => toggleFloatingAiDrawer()
+    'headerCreateTicketBtn': (e) => { if (e) e.stopPropagation(); openCreateModal(); },
+    'sidebarCreateTicketBtn': (e) => { if (e) e.stopPropagation(); openCreateModal(); },
+    'userSwitcherBtn': (e) => { if (e) e.stopPropagation(); toggleUserDropdown(); },
+    'notificationBellBtn': (e) => { if (e) e.stopPropagation(); toggleNotificationPanel(); },
+    'markAllReadBtn': (e) => { if (e) e.stopPropagation(); markAllNotificationsRead(); },
+    'themeToggleBtn': (e) => { if (e) e.stopPropagation(); toggleTheme(); },
+    'floatingAiBtn': (e) => { if (e) e.stopPropagation(); toggleFloatingAiDrawer(); },
+    'drawerNewChatBtn': (e) => { if (e) e.stopPropagation(); startNewDrawerChat(); },
+    'drawerCloseBtn': (e) => { if (e) e.stopPropagation(); toggleFloatingAiDrawer(false); }
   };
   for (const [id, fn] of Object.entries(map)) {
     const el = document.getElementById(id);
@@ -8310,10 +8310,26 @@ async function submitFullScreenAiQuestion(e) {
 }
 
 // --- FLOATING AI COPILOT DRAWER ---
-function toggleFloatingAiDrawer() {
+function toggleFloatingAiDrawer(force) {
   const drawer = document.getElementById('aiDrawer');
-  if (drawer) drawer.classList.toggle('hidden');
+  if (!drawer) return;
+  if (typeof force === 'boolean') {
+    if (force) {
+      drawer.classList.remove('hidden');
+    } else {
+      drawer.classList.add('hidden');
+    }
+  } else {
+    drawer.classList.toggle('hidden');
+  }
+  if (!drawer.classList.contains('hidden')) {
+    const input = document.getElementById('drawerInput');
+    if (input) setTimeout(() => input.focus(), 60);
+  }
 }
+window.toggleFloatingAiDrawer = toggleFloatingAiDrawer;
+window.openFloatingAiDrawer = () => toggleFloatingAiDrawer(true);
+window.closeFloatingAiDrawer = () => toggleFloatingAiDrawer(false);
 
 function updateDrawerTicketContext(ctx) {
   const bar = document.getElementById('drawerTicketContextBar');
@@ -8395,7 +8411,7 @@ async function submitDrawerQuestion(e) {
 
 // Quick action trigger from Ticket Detail
 function triggerTicketCopilot(ticketNumber) {
-  toggleFloatingAiDrawer();
+  toggleFloatingAiDrawer(true);
   const input = document.getElementById('drawerInput');
   if (input) {
     input.value = `How should I investigate incident ${ticketNumber}?`;

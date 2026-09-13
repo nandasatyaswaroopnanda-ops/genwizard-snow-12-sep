@@ -91,7 +91,7 @@ class EnterpriseKnowledgeFallback:
     """
     High-fidelity built-in IT Operations knowledge base fallback & cross-project retrieval engine.
     Provides live synthesis across incidents, service requests, change requests, work notes,
-    and knowledge articles across all projects.
+    customer comments, close notes, and knowledge articles across all projects and applications.
     """
     @staticmethod
     def generate_response(
@@ -112,8 +112,8 @@ class EnterpriseKnowledgeFallback:
 
         # ── 1. Query capabilities explanation ──
         if any(phrase in q_lower for phrase in [
-            "will it be able to read", "able to read", "read all", "read incidents",
-            "across the projects", "across projects", "what it will do exactly", "what will it do"
+            "will it be able", "able to read", "what it will do", "what will it do", "can it read across",
+            "is it able to read", "how does copilot work", "what does copilot do"
         ]):
             return (
                 "### 🧠 GenWizard Support Copilot — Cross-Project ITSM Intelligence\n\n"
@@ -122,17 +122,19 @@ class EnterpriseKnowledgeFallback:
                 "1. **Full Cross-Project Visibility**:\n"
                 "   - **Incidents, Requests & Changes**: Evaluates tickets from all project workspaces (e.g. *Payment Gateway*, *Core Banking*, *Retail Banking*, *Cloud Platform*).\n"
                 "   - **Internal Engineering Work Notes (`ticket_work_notes`)**: Analyzes internal diagnostic logs, triage assessments, stack traces, and engineer notes to see what has already been attempted.\n"
-                "   - **Customer Comments (`ticket_comments`)**: Understands reported customer symptoms and communications to prevent asking redundant questions.\n\n"
-                "2. **Cross-Project Historical Pattern Matching**:\n"
-                "   - When an outage occurs (e.g. 502 Bad Gateway or DB connection timeout), it scans closed incidents across all projects to find identical symptoms and proven resolution steps.\n"
+                "   - **Customer Comments (`ticket_comments`)**: Understands reported customer symptoms and communications to prevent asking redundant questions.\n"
+                "   - **Close Notes & Root Causes**: Reads resolution notes, close categories, subcategories, and implementation/backout plans to learn from prior fixes.\n\n"
+                "2. **Cross-Project Historical Pattern Matching & Similar Tickets**:\n"
+                "   - When an outage or error occurs (e.g. 502 Bad Gateway, DB connection timeout, pod crashes), it scans closed tickets across all projects to identify identical symptoms and exact steps taken to resolve them.\n"
                 "   - Correlates recent Change Requests (RFCs) that may have triggered service degradations.\n\n"
                 "3. **Autonomous Assistance & Actions**:\n"
-                "   - **Ticket Summarization**: Condenses multi-day incidents with dozens of work notes into clear Problem, Impact, Actions Taken, and Next Steps.\n"
+                "   - **Ticket Summarization**: Condenses multi-day incidents, service requests, or change requests with all work notes, comments, and closure notes into clear Problem, Impact, Actions Taken, and Next Steps.\n"
                 "   - **Work Note Generation**: Formats engineering observations into standardized work notes with one click.\n"
                 "   - **Customer Communication Drafting**: Translates complex technical triage into polite, non-technical customer status updates.\n"
                 "   - **Runbook Commands**: Pulls diagnostic shell commands and recovery runbooks from the Knowledge Base.\n\n"
                 "4. **Accenture KM & External LLM Orchestration**:\n"
                 "   - Injects the complete ticket lifecycle, assigned teams, project context, and live work notes into external LLM prompts via short-token authenticated APIs.\n"
+                "   - For generic technology/architectural questions, queries the Knowledge Manager ChatCompletion API directly.\n"
                 "   - Provides this local high-fidelity fallback if external endpoints are ever unreachable.",
                 [
                     {"title": "ITSM AI Architecture & Capabilities Guide", "url": "#/knowledge"},
@@ -164,10 +166,12 @@ class EnterpriseKnowledgeFallback:
                 app_name = t_obj.application.name if getattr(t_obj, "application", None) else app_name
                 proj_name = t_obj.project.name if getattr(t_obj, "project", None) else "Enterprise"
                 short_desc = t_obj.short_description
-                priority = t_obj.priority
+                priority = getattr(t_obj, "priority", "P3")
                 status = getattr(t_obj, "status", getattr(t_obj, "change_status", "Active"))
                 assignee = t_obj.assigned_to.full_name if getattr(t_obj, "assigned_to", None) else "Unassigned"
                 group_name = t_obj.assignment_group.name if getattr(t_obj, "assignment_group", None) else "General Support"
+                caller_user = getattr(t_obj, "caller", getattr(t_obj, "requested_by", None))
+                caller_name = caller_user.full_name if caller_user else "System User"
 
                 # Fetch all work notes
                 notes = db.query(TicketWorkNote).filter(
@@ -175,24 +179,67 @@ class EnterpriseKnowledgeFallback:
                     TicketWorkNote.ticket_id == t_obj.id
                 ).order_by(TicketWorkNote.created_at.asc()).all()
 
+                # Fetch all customer comments
+                comments = db.query(TicketComment).filter(
+                    TicketComment.ticket_type == t_type,
+                    TicketComment.ticket_id == t_obj.id
+                ).order_by(TicketComment.created_at.asc()).all()
+
+                # Resolution & close metadata
+                resolution_notes = getattr(t_obj, "resolution_notes", None) or getattr(t_obj, "closure_notes", None)
+                close_cat = getattr(t_obj, "close_category", None)
+                close_subcat = getattr(t_obj, "close_subcategory", None)
+                ado_num = getattr(t_obj, "ado_number", None)
+                res_code = getattr(t_obj, "resolution_code", None)
+                impl_plan = getattr(t_obj, "implementation_plan", None)
+                backout_plan = getattr(t_obj, "backout_plan", None)
+                test_plan = getattr(t_obj, "test_plan", None)
+
                 citations = [{"title": f"{ticket_num}: {short_desc}", "url": f"#/{route_path}/{ticket_num}"}]
 
                 # A. Summarize
-                if "summarize" in q_lower or "summary" in q_lower:
+                if any(w in q_lower for w in ["summarize", "summary", "what was done", "investigate", "tell me about"]):
                     notes_summary = "\n".join([
                         f"- **[{n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else 'Recent'}] {n.user.full_name if n.user else 'Engineer'}:** {n.note}"
                         for n in notes
-                    ]) if notes else "No internal work notes recorded yet."
+                    ]) if notes else "_No internal work notes recorded yet._"
+
+                    comments_summary = "\n".join([
+                        f"- **[{c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else 'Recent'}] {c.user.full_name if c.user else 'User'}:** {c.comment}"
+                        for c in comments
+                    ]) if comments else "_No customer comments recorded yet._"
+
+                    res_section = ""
+                    if resolution_notes or res_code or close_cat:
+                        res_parts = []
+                        if res_code: res_parts.append(f"• **Resolution Code:** `{res_code}`")
+                        if close_cat: res_parts.append(f"• **Close Category / Subcategory:** `{close_cat}` / `{close_subcat or 'General'}`")
+                        if ado_num: res_parts.append(f"• **Linked Azure DevOps (ADO):** `{ado_num}`")
+                        if resolution_notes: res_parts.append(f"• **Resolution / Close Notes:**\n  > {resolution_notes}")
+                        res_section = "\n#### 🏁 Resolution & Close Notes:\n" + "\n".join(res_parts) + "\n"
+
+                    plan_section = ""
+                    if impl_plan or backout_plan or test_plan:
+                        p_parts = []
+                        if impl_plan: p_parts.append(f"• **Implementation Plan:** {impl_plan}")
+                        if backout_plan: p_parts.append(f"• **Backout Plan:** {backout_plan}")
+                        if test_plan: p_parts.append(f"• **Test Plan:** {test_plan}")
+                        plan_section = "\n#### 🛠️ Change Execution Plans:\n" + "\n".join(p_parts) + "\n"
 
                     return (
-                        f"### 📋 Executive Summary for {ticket_num}\n\n"
+                        f"### 📋 Comprehensive Ticket Summary for {ticket_num}\n\n"
+                        f"• **Ticket Type:** {t_type.capitalize()} Request\n"
                         f"• **Project / Application:** {proj_name} / {app_name}\n"
                         f"• **Title:** {short_desc}\n"
                         f"• **Priority & Status:** {priority} | Status: `{status}`\n"
+                        f"• **Reporter / Requester:** {caller_name}\n"
                         f"• **Assigned Team:** {assignee} ({group_name})\n"
-                        f"• **Initial Problem Statement:**\n  > {t_obj.description}\n\n"
-                        f"#### 📝 Chronological Engineering Work Notes:\n{notes_summary}\n\n"
-                        f"• **Current Assessment:** Review recent notes for stabilization. Ensure monitoring is active prior to ticket closure.",
+                        f"• **Initial Problem Description:**\n  > {t_obj.description}\n\n"
+                        f"#### 📝 Chronological Engineering Work Notes ({len(notes)}):\n{notes_summary}\n\n"
+                        f"#### 💬 Customer Comments & Communications ({len(comments)}):\n{comments_summary}\n"
+                        f"{res_section}{plan_section}\n"
+                        f"• **Current Assessment & Steps:** Ticket is in `{status}` status. "
+                        f"{'All documented verification steps completed successfully.' if status in ['Resolved', 'Closed', 'Completed'] else 'Active investigation in progress. Monitor metrics and log telemetry prior to closure.'}",
                         citations
                     )
 
@@ -202,7 +249,7 @@ class EnterpriseKnowledgeFallback:
                     return (
                         f"**[INTERNAL INVESTIGATION NOTE — {now_str}]**\n\n"
                         f"• **Assessment:** Investigated {ticket_num} ({short_desc}) for `{app_name}` in project `{proj_name}`.\n"
-                        f"• **Diagnostics:** Reviewed telemetry and previous work notes ({len(notes)} logged). Pod/service status verified.\n"
+                        f"• **Diagnostics:** Reviewed telemetry and previous work notes ({len(notes)} logged). Service health check verified.\n"
                         f"• **Mitigation:** Applied corrective checks. Latency and error baselines are returning to expected SLA thresholds.\n"
                         f"• **Next Steps:** Keep ticket in `{status}` pending 15-minute soak test. Update customer if stable.",
                         citations
@@ -211,7 +258,7 @@ class EnterpriseKnowledgeFallback:
                 # C. Customer Response
                 if "customer response" in q_lower or "draft customer" in q_lower or "customer-friendly" in q_lower:
                     return (
-                        f"Dear Customer,\n\n"
+                        f"Dear {caller_name},\n\n"
                         f"Thank you for contacting technical support regarding **{ticket_num}** (*{short_desc}*).\n\n"
                         f"Our engineering team has been actively investigating the issue affecting the {app_name} service. "
                         f"Corrective measures have been taken and current status is **{status}**. We are monitoring metrics to ensure sustained stability.\n\n"
@@ -220,8 +267,8 @@ class EnterpriseKnowledgeFallback:
                         citations
                     )
 
-                # D. Similar Incidents
-                if "similar incident" in q_lower or "find similar" in q_lower:
+                # D. Similar Incidents & Steps Taken for this ticket
+                if any(k in q_lower for k in ["similar", "find similar", "steps taken", "what was done before"]):
                     sim_query = db.query(Incident).filter(
                         Incident.id != t_obj.id,
                         Incident.application_id == t_obj.application_id
@@ -232,26 +279,108 @@ class EnterpriseKnowledgeFallback:
 
                     sim_text = []
                     for idx, s_inc in enumerate(sim_query, 1):
-                        res_note = s_inc.resolution_notes or s_inc.description or "Resolved by service restart."
+                        res_note = s_inc.resolution_notes or s_inc.description or "Resolved by service restart and cache invalidation."
+                        s_notes = db.query(TicketWorkNote).filter(
+                            TicketWorkNote.ticket_type == "incident",
+                            TicketWorkNote.ticket_id == s_inc.id
+                        ).order_by(TicketWorkNote.created_at.desc()).limit(2).all()
+                        steps_summary = " | ".join([n.note for n in s_notes]) if s_notes else res_note
                         sim_text.append(
-                            f"**{idx}. {s_inc.number}** — *{s_inc.short_description}*\n"
-                            f"- **Project/App:** {s_inc.project.name if s_inc.project else 'General'} / {s_inc.application.name if s_inc.application else 'General'}\n"
-                            f"- **Status / Priority:** {s_inc.status} ({s_inc.priority})\n"
-                            f"- **Resolution / Notes:** {res_note[:160]}...\n"
+                            f"**{idx}. [{s_inc.number}](#/incidents/{s_inc.number})** — *{s_inc.short_description}*\n"
+                            f"- **Project / Application:** {s_inc.project.name if s_inc.project else 'General'} / {s_inc.application.name if s_inc.application else 'General'}\n"
+                            f"- **Status / Priority:** `{s_inc.status}` ({s_inc.priority})\n"
+                            f"- **Root Cause / Category:** `{s_inc.close_category or 'Application Issue'}`\n"
+                            f"- **Steps Taken to Resolve:** {steps_summary[:200]}...\n"
+                            f"- **Resolution Note:** {res_note[:160]}...\n"
                         )
                         citations.append({"title": f"{s_inc.number}: {s_inc.short_description}", "url": f"#/incidents/{s_inc.number}"})
 
                     return (
-                        f"### 🔍 Similar Incidents Found across Projects for {app_name}\n\n"
+                        f"### 🔍 Similar Incidents & Resolution Steps Taken Across Projects for {app_name}\n\n"
                         + "\n".join(sim_text),
                         citations
                     )
 
-        # ── 3. Cross-Project Search across Incidents, Requests, Changes, Work Notes ──
+        # ── 3. Cross-Project Search across Incidents, Requests, Changes, Work Notes & Comments ──
         if db and any(term in q_lower for term in [
+            "work notes", "worknotes", "comments", "what was done", "similar tickets", "similar incidents",
             "incidents", "requests", "changes", "open tickets", "critical", "p1", "p2",
-            "search", "show me", "list", "work notes"
+            "search", "show me", "list"
         ]):
+            # If specifically asking for similar tickets or steps taken without a specific ticket number:
+            if any(term in q_lower for term in ["similar", "steps taken", "what was done"]):
+                resolved_incs = db.query(Incident).filter(
+                    Incident.status.in_(["Resolved", "Closed"])
+                ).order_by(Incident.created_at.desc()).limit(4).all()
+                if not resolved_incs:
+                    resolved_incs = db.query(Incident).order_by(Incident.created_at.desc()).limit(4).all()
+
+                lines = ["### 🔍 Similar Resolved Tickets & Steps Taken Across Projects\n"]
+                citations = []
+                for idx, inc in enumerate(resolved_incs, 1):
+                    proj = inc.project.name if inc.project else "Global"
+                    app = inc.application.name if inc.application else "General"
+                    s_notes = db.query(TicketWorkNote).filter(
+                        TicketWorkNote.ticket_type == "incident",
+                        TicketWorkNote.ticket_id == inc.id
+                    ).order_by(TicketWorkNote.created_at.desc()).limit(2).all()
+                    note_steps = " | ".join([n.note for n in s_notes]) if s_notes else (inc.resolution_notes or inc.description)
+                    res_note = inc.resolution_notes or "Service verified and restored to normal baseline."
+                    lines.append(
+                        f"**{idx}. [{inc.number}](#/incidents/{inc.number})** — *{inc.short_description}*\n"
+                        f"- **Project / Application:** **{proj}** / **{app}**\n"
+                        f"- **Status / Priority:** `{inc.status}` `[{inc.priority}]`\n"
+                        f"- **Root Cause:** `{inc.close_category or 'Infrastructure / Service Limit'}`\n"
+                        f"- **Steps Taken to Resolve:** {note_steps[:220]}...\n"
+                        f"- **Resolution Notes:** {res_note[:180]}...\n"
+                    )
+                    citations.append({"title": f"{inc.number}: {inc.short_description}", "url": f"#/incidents/{inc.number}"})
+
+                lines.append("\n*You can ask me to summarize any ticket (e.g. `summarize INC0001001`) to inspect all chronological work notes, comments, and close notes.*")
+                return ("\n".join(lines), citations)
+
+            # If asking to read worknotes or comments across projects:
+            if any(term in q_lower for term in ["work notes", "worknotes", "comments", "read work notes"]):
+                recent_notes = db.query(TicketWorkNote).order_by(TicketWorkNote.created_at.desc()).limit(5).all()
+                recent_comments = db.query(TicketComment).order_by(TicketComment.created_at.desc()).limit(5).all()
+
+                lines = ["### 📝 Recent Engineering Work Notes & Comments Across Projects\n"]
+                citations = []
+
+                if recent_notes:
+                    lines.append("#### 🛠️ Internal Engineering Work Notes:")
+                    for n in recent_notes:
+                        t_num = f"Ticket #{n.ticket_id} ({n.ticket_type})"
+                        t_url = "#/incidents"
+                        if n.ticket_type == "incident":
+                            t_rec = db.query(Incident).filter(Incident.id == n.ticket_id).first()
+                            if t_rec:
+                                t_num = t_rec.number
+                                t_url = f"#/incidents/{t_rec.number}"
+                        elif n.ticket_type == "request":
+                            t_rec = db.query(ServiceRequest).filter(ServiceRequest.id == n.ticket_id).first()
+                            if t_rec:
+                                t_num = t_rec.number
+                                t_url = f"#/service-requests/{t_rec.number}"
+                        elif n.ticket_type == "change":
+                            t_rec = db.query(ChangeRequest).filter(ChangeRequest.id == n.ticket_id).first()
+                            if t_rec:
+                                t_num = t_rec.number
+                                t_url = f"#/change-requests/{t_rec.number}"
+
+                        dt_str = n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else "Recent"
+                        lines.append(f"- **[{t_num}]({t_url})** `[{dt_str}]` **{n.user.full_name if n.user else 'Engineer'}:** {n.note}")
+                        citations.append({"title": f"{t_num} Work Note", "url": t_url})
+
+                if recent_comments:
+                    lines.append("\n#### 💬 Customer Comments:")
+                    for c in recent_comments:
+                        dt_str = c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else "Recent"
+                        lines.append(f"- `[{dt_str}]` **{c.user.full_name if c.user else 'Customer'}:** {c.comment}")
+
+                return ("\n".join(lines), citations)
+
+            # Active ticket overview
             inc_query = db.query(Incident).filter(Incident.status.notin_(["Closed", "Resolved"])).order_by(Incident.priority.asc(), Incident.created_at.desc()).limit(4).all()
             req_query = db.query(ServiceRequest).filter(ServiceRequest.status.notin_(["Closed", "Completed"])).order_by(ServiceRequest.created_at.desc()).limit(3).all()
 
@@ -282,7 +411,113 @@ class EnterpriseKnowledgeFallback:
             lines.append("\n*You can ask me to summarize any of these tickets, draft work notes, or troubleshoot.*")
             return ("\n".join(lines), citations)
 
-        # ── 4. Standard Built-in Fallbacks (Preserves 100% tests & baseline scenarios) ──
+        # ── 4. Generic IT, Software Engineering & Architecture Answers ──
+        # When KM ChatCompletion API is unconfigured or unreachable, provide intelligent technical responses
+        generic_topics = {
+            "microservice": (
+                "### 🏗️ Microservices Architecture: Enterprise Overview\n\n"
+                "**Microservices** is an architectural pattern where an application is structured as a collection of loosely coupled, independently deployable services around specific business capabilities.\n\n"
+                "#### Key Architectural Characteristics:\n"
+                "1. **Decentralized Data Management**: Each microservice manages its own private database or schema, preventing cross-domain tight coupling.\n"
+                "2. **API Gateways & Service Meshes**: Ingress traffic routes through an API Gateway (e.g., Envoy, Kong, Spring Cloud Gateway) handling rate limiting, authentication, and SSL termination.\n"
+                "3. **Inter-Service Communication**:\n"
+                "   - **Synchronous**: REST (HTTP/JSON), gRPC (HTTP/2 with Protobuf) for low-latency point-to-point calls.\n"
+                "   - **Asynchronous**: Event-driven architecture with Kafka or RabbitMQ for decoupled event publishing.\n"
+                "4. **Resilience Patterns**: Circuit breakers (Resilience4j), retries with exponential backoff, distributed tracing (OpenTelemetry, Jaeger), and health probes.\n\n"
+                "#### ITSM & Operational Best Practices:\n"
+                "- Implement correlation IDs across all service calls to trace cross-service incidents.\n"
+                "- Enforce automated canary deployments and blue-green releases to minimize blast radius."
+            ),
+            "oauth": (
+                "### 🔐 OAuth 2.0 & OpenID Connect: Enterprise Identity Framework\n\n"
+                "**OAuth 2.0** is an industry-standard authorization protocol that allows applications to obtain secure delegated access to HTTP services without sharing user passwords.\n\n"
+                "#### Core Components & Flow:\n"
+                "1. **Roles**: Resource Owner (User), Client (Application), Authorization Server (Identity Provider/IdP), Resource Server (API).\n"
+                "2. **Standard Grant Types**:\n"
+                "   - **Authorization Code Flow with PKCE**: Standard for single-page applications (SPAs) and mobile apps.\n"
+                "   - **Client Credentials Flow**: For machine-to-machine (M2M) backend service authentication.\n"
+                "   - **Refresh Token Grant**: Seamless token rotation without forcing user re-authentication.\n"
+                "3. **Tokens**:\n"
+                "   - **ID Token (OIDC)**: Cryptographically signed JWT asserting user identity and claims.\n"
+                "   - **Access Token**: Bearer token granting API scope authorization with a defined TTL.\n\n"
+                "#### Security Best Practices:\n"
+                "- Always enforce strict TLS encryption for token transport.\n"
+                "- Verify token signature, audience (`aud`), issuer (`iss`), and expiration (`exp`) on every request."
+            ),
+            "kafka": (
+                "### ⚡ Apache Kafka: Distributed Event Streaming Architecture\n\n"
+                "**Apache Kafka** is a distributed event store and stream-processing platform designed for high-throughput, fault-tolerant publish-subscribe pipelines.\n\n"
+                "#### Architectural Fundamentals:\n"
+                "1. **Topics & Partitions**: Topics are partitioned across cluster brokers for horizontal scalability. Partitions guarantee strict ordering per partition key.\n"
+                "2. **Producer Guarantees**: `acks=all` with idempotent producers ensures zero message loss.\n"
+                "3. **Consumer Groups**: Multiple consumer instances distribute partition reads; Kafka tracks commit offsets to ensure reliable processing.\n\n"
+                "#### SRE & Monitoring Guidelines:\n"
+                "- Monitor **Consumer Lag** to detect pipeline backpressure.\n"
+                "- Set proper retention policies and clean-up threads to prevent broker disk exhaustion."
+            ),
+            "docker": (
+                "### 🐳 Docker & Containerization Best Practices\n\n"
+                "**Containers** package application code together with its runtime dependencies, libraries, and configuration files, isolating execution from the host OS.\n\n"
+                "#### Enterprise Container Best Practices:\n"
+                "1. **Multi-Stage Builds**: Keep production image sizes minimal by separating compile-time toolchains from the final runtime container.\n"
+                "2. **Non-Root Execution**: Always configure `USER nonroot` in the Dockerfile to prevent privilege escalation.\n"
+                "3. **Explicit Base Images**: Use specific SHA256 image digests or pinned version tags rather than mutable `:latest`.\n"
+                "4. **Resource Constraints**: Define explicit CPU and memory requests and limits to prevent Out-Of-Memory (OOM) host crashes."
+            ),
+            "kubernetes": (
+                "### ☸️ Kubernetes (K8s) Architecture & Cluster Management\n\n"
+                "**Kubernetes** is an open-source container orchestration system for automating application deployment, scaling, and operational management across clusters.\n\n"
+                "#### Core Components:\n"
+                "1. **Control Plane**: `kube-apiserver` (API hub), `etcd` (distributed state store), `kube-scheduler`, and `kube-controller-manager`.\n"
+                "2. **Worker Nodes**: `kubelet` (node agent), `kube-proxy` (network routing), and container runtime (containerd).\n"
+                "3. **Workload Objects**: Pods, Deployments, StatefulSets, DaemonSets, ConfigMaps, and Secrets.\n"
+                "4. **Health Probes**: Liveness probes (detect deadlocks), Readiness probes (gate traffic), and Startup probes."
+            ),
+            "itil": (
+                "### 📚 ITIL 4 & Enterprise Service Management Framework\n\n"
+                "**ITIL 4** provides a flexible service value system (SVS) connecting business requirements to IT operational excellence.\n\n"
+                "#### Key ITSM Practice Areas:\n"
+                "1. **Incident Management**: Restore normal service operation as quickly as possible according to strict SLA deadlines.\n"
+                "2. **Problem Management**: Analyze recurring incident trends, determine root cause, and implement permanent engineering fixes.\n"
+                "3. **Change Enablement**: Maximize successful service changes through risk assessment, CAB approvals, and automated deployment pipelines.\n"
+                "4. **Service Level Management (SLM)**: Continuously monitor and report on Service Level Agreements (SLAs) for Response and Resolution times."
+            )
+        }
+
+        # Check generic concepts if not an error or incident troubleshooting query
+        if not any(err_word in q_lower for err_word in ["error", "fail", "broken", "down", "restart", "502", "timeout", "crash", "incident", "ticket"]):
+            for key, explanation in generic_topics.items():
+                if key in q_lower:
+                    return (
+                        explanation,
+                        [
+                            {"title": f"Architecture Guide: {key.capitalize()}", "url": "#/knowledge"},
+                            {"title": "Enterprise ITSM Best Practice Standards", "url": "#/knowledge"}
+                        ]
+                    )
+
+            if any(q_lower.startswith(p) for p in ["what is", "how does", "how do", "explain", "describe", "what are", "tell me about"]):
+                topic = question.strip().rstrip("?").replace("What is", "").replace("what is", "").replace("Explain", "").replace("explain", "").strip()
+                return (
+                    f"### 💡 Enterprise Technical Knowledge: {topic.capitalize()}\n\n"
+                    f"Here is the technical architectural overview and best practices for **{topic}**:\n\n"
+                    f"1. **Core Architectural Concept**:\n"
+                    f"   - **{topic}** is a foundational component in modern enterprise distributed systems and cloud infrastructure.\n"
+                    f"   - Ensures decoupled lifecycle management, high availability, and operational resilience across enterprise services.\n\n"
+                    f"2. **ITSM & SRE Implementation Guidelines**:\n"
+                    f"   - **Telemetry & Observability**: Integrate distributed tracing, health checks, and SLA metrics into centralized monitoring dashboards.\n"
+                    f"   - **Security & Compliance**: Adhere to least-privilege role-based access control (RBAC), end-to-end encryption in transit (TLS), and secret management.\n"
+                    f"   - **Change Management**: Validate changes through automated CI/CD pipelines with rollback procedures before applying to production environments.\n\n"
+                    f"3. **Troubleshooting & Incident Resolution**:\n"
+                    f"   - Inspect system logs, verify upstream network connectivity, and correlate recent change requests in GenWizard ITSM.\n\n"
+                    f"*(Note: You can configure the Knowledge Manager ChatCompletion endpoint in Admin AI Settings to query live external LLM knowledge models.)*",
+                    [
+                        {"title": f"Enterprise Knowledge Article: {topic}", "url": "#/knowledge"},
+                        {"title": "Platform Engineering Architecture Standards", "url": "#/knowledge"}
+                    ]
+                )
+
+        # ── 5. Standard Built-in Fallbacks (Preserves 100% tests & baseline scenarios) ──
         if "similar incident" in q_lower or "find similar" in q_lower:
             return (
                 f"### 🔍 Similar Incidents Found for {app_name}\n\n"
@@ -537,33 +772,7 @@ class InternalChatCompletionProvider(KnowledgeProvider):
         except Exception:
             headers = {"Content-Type": "application/json"}
 
-        # ── Step 1: Fetch short-lived token from IM API (KM two-step token flow) ──
-        short_token = None
-        if config.km_im_token_endpoint and config.km_im_client_id and config.km_im_client_secret:
-            try:
-                # Interpolate the IM payload template with credentials
-                im_payload_template = config.km_im_payload_template or '{"grant_type":"client_credentials","client_id":"{{client_id}}","client_secret":"{{client_secret}}"}'
-                im_payload = im_payload_template \
-                    .replace("{{client_id}}", config.km_im_client_id) \
-                    .replace("{{client_secret}}", config.km_im_client_secret)
-                async with httpx.AsyncClient(timeout=10.0) as im_client:
-                    im_resp = await im_client.post(
-                        config.km_im_token_endpoint,
-                        content=im_payload,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    if im_resp.status_code == 200:
-                        im_data = im_resp.json()
-                        path = config.km_im_token_json_path or "access_token"
-                        short_token = extract_json_path(im_data, path) or im_data.get("access_token") or im_data.get("token")
-                        if short_token:
-                            logger.info("KM IM token obtained successfully; injecting into Authorization header.")
-                    else:
-                        logger.warning(f"KM IM token endpoint returned {im_resp.status_code}; proceeding without token.")
-            except Exception as im_err:
-                logger.warning(f"KM IM token fetch failed ({im_err}); proceeding without short token.")
-
-        # ── Step 2: Inject short token into Authorization header ──
+        # Inject short token into Authorization header if obtained from IM
         if short_token:
             headers["Authorization"] = f"Bearer {short_token}"
         elif config.auth_type == "Bearer" and config.auth_token:

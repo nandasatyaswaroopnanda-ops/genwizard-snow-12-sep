@@ -285,6 +285,9 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('click', function(e) {
     var el = e.target.closest('[data-action], [data-click], [onclick]');
     if (!el) return;
+    if (el._actionHandled) return;
+    el._actionHandled = true;
+    setTimeout(function() { el._actionHandled = false; }, 80);
     var action = el.getAttribute('data-action') || el.getAttribute('data-click') || el.getAttribute('onclick');
     if (action) {
       dispatchAction(action, el, e);
