@@ -352,3 +352,93 @@ def test_ai_copilot_generic_questions_knowledge():
     assert "Authorization Code Flow" in resp_oauth
     assert "Access Token" in resp_oauth
     assert "kubectl" not in resp_oauth
+
+def test_km_short_token_and_chatcompletion_flow(test_db):
+    import asyncio
+    import json
+    from unittest.mock import patch
+    import httpx
+    from backend.models import AIConfiguration
+    from backend.ai_copilot import InternalChatCompletionProvider
+
+    provider = InternalChatCompletionProvider()
+    cfg = AIConfiguration(
+        km_base_url="https://km.enterprise.corp",
+        api_endpoint="/api/v2/acnopenai/chatcompletion",
+        username="km_admin",
+        password="secret_password",
+        km_index="custom-kb-index",
+        headers_template='{"Content-Type": "application/json", "apiToken": "{{apiToken}}"}',
+        payload_template='''{
+  "prompt": "{{prompt}}",
+  "index": "{{index}}",
+  "sessionid": "{{sessionid}}",
+  "prompt_objective": "{{prompt_objective}}",
+  "config": {},
+  "reset_context": false,
+  "prompt_prefix": "{{prompt_prefix}}"
+}'''
+    )
+
+    captured_requests = []
+
+    async def mock_request(*args, **kwargs):
+        if len(args) > 1 and str(args[0]).upper() in ("GET", "POST", "PUT", "DELETE", "PATCH"):
+            method = kwargs.get("method") or args[0]
+            url = kwargs.get("url") or args[1]
+        elif len(args) > 0:
+            url = kwargs.get("url") or args[0]
+            method = kwargs.get("method") or "POST"
+        else:
+            url = kwargs.get("url") or ""
+            method = kwargs.get("method") or "POST"
+        headers = kwargs.get("headers", {})
+        content = kwargs.get("content")
+        json_body = kwargs.get("json")
+        captured_requests.append({
+            "method": method,
+            "url": str(url),
+            "headers": headers,
+            "content": content,
+            "json": json_body
+        })
+
+        req = httpx.Request(method=str(method or "POST"), url=str(url))
+        if "identity-management/api/v1/auth/token" in str(url):
+            return httpx.Response(200, json={"token": "mock-short-lived-km-token-xyz"}, request=req)
+        elif "acnopenai/chatcompletion" in str(url):
+            return httpx.Response(200, json={"response": "Resolved by KM ChatCompletion."}, request=req)
+        return httpx.Response(404, request=req)
+
+    async def run_test():
+        with patch.object(httpx.AsyncClient, "post", side_effect=mock_request), \
+             patch.object(httpx.AsyncClient, "request", side_effect=mock_request):
+            token = await provider._get_km_short_token(cfg)
+            assert token == "mock-short-lived-km-token-xyz"
+            assert "identity-management/api/v1/auth/token?useDeflate=true" in captured_requests[0]["url"]
+
+            resp = await provider.chat(
+                db=test_db,
+                config=cfg,
+                question="How to configure Kafka consumer group?",
+                conversation_id="conv-session-123",
+                ticket_context={"ticket_number": "INC0001234", "application": "Payment API"}
+            )
+            assert resp["content"] == "Resolved by KM ChatCompletion."
+
+            chat_req = captured_requests[-1]
+            assert "https://km.enterprise.corp/api/v2/acnopenai/chatcompletion" in chat_req["url"]
+            assert chat_req["headers"].get("apiToken") == "mock-short-lived-km-token-xyz"
+
+            body_dict = json.loads(chat_req["content"])
+            assert "prompt" in body_dict
+            assert body_dict["prompt"] == "How to configure Kafka consumer group?"
+            assert body_dict["index"] == "custom-kb-index"
+            assert body_dict["sessionid"] == "conv-session-123"
+            assert body_dict["prompt_objective"] == "itsm_support_troubleshooting"
+            assert "config" in body_dict
+            assert body_dict["reset_context"] is False
+            assert "prompt_prefix" in body_dict
+            assert "Payment API" in body_dict["prompt_prefix"]
+
+    asyncio.run(run_test())

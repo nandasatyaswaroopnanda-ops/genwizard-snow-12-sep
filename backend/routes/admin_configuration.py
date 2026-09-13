@@ -155,11 +155,13 @@ def delete_column(item_id: int, db: Session = Depends(get_db), _: User = Depends
 
 class KMConfigSchema(BaseModel):
     km_base_url: str
-    api_endpoint: Optional[str] = "/api/chat/completions"
+    api_endpoint: Optional[str] = "/api/v2/acnopenai/chatcompletion"
     username: Optional[str] = None
     password: Optional[str] = None
     km_index: Optional[str] = "itsm-kb"
     auth_token: Optional[str] = None
+    payload_template: Optional[str] = None
+    headers_template: Optional[str] = None
     sync_to_consul: bool = True
 
 
@@ -190,7 +192,7 @@ def update_km_configuration(
         db.add(cfg)
     
     cfg.km_base_url = payload.km_base_url
-    cfg.api_endpoint = payload.api_endpoint or "/api/chat/completions"
+    cfg.api_endpoint = payload.api_endpoint or "/api/v2/acnopenai/chatcompletion"
     if payload.username is not None and payload.username != "••••••••":
         cfg.username = payload.username
     if payload.password is not None and payload.password != "••••••••":
@@ -199,6 +201,10 @@ def update_km_configuration(
         cfg.km_index = payload.km_index
     if payload.auth_token is not None and payload.auth_token != "••••••••":
         cfg.auth_token = payload.auth_token
+    if payload.payload_template is not None:
+        cfg.payload_template = payload.payload_template
+    if payload.headers_template is not None:
+        cfg.headers_template = payload.headers_template
     
     db.commit()
     db.refresh(cfg)
@@ -218,7 +224,9 @@ def update_km_configuration(
                     "username": cfg.username or "",
                     "password": cfg.password or "",
                     "index": cfg.km_index or "itsm-kb",
-                    "auth_token": cfg.auth_token or ""
+                    "auth_token": cfg.auth_token or "",
+                    "payload_template": cfg.payload_template,
+                    "headers_template": cfg.headers_template
                 }
                 requests.put(
                     f"{address}/v1/kv/nexus-itsm/km/config",

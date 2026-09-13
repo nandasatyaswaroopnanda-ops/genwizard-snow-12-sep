@@ -1188,7 +1188,7 @@ class AIConfiguration(Base):
     assistant_name = Column(String(100), default="GenWizard Support Copilot", nullable=False)
     welcome_message = Column(Text, default="Hello! I am your GenWizard Support Copilot. Ask me anything about your applications, runbooks, or troubleshooting procedures.")
     km_base_url = Column(String(255), default="https://internal-km.company.local")
-    api_endpoint = Column(String(255), default="/api/chat/completions")
+    api_endpoint = Column(String(255), default="/api/v2/acnopenai/chatcompletion")
     auth_type = Column(String(50), default="Bearer")
     auth_token = Column(String(255), default="env:KM_API_TOKEN")
     km_im_token_endpoint = Column(String(255), nullable=True)
@@ -1201,22 +1201,17 @@ class AIConfiguration(Base):
     km_index = Column(String(100), default="itsm-kb", nullable=True)
     timeout_seconds = Column(Integer, default=30)
     http_method = Column(String(10), default="POST")
-    headers_template = Column(Text, default='{"Content-Type": "application/json"}')
+    headers_template = Column(Text, default='{"Content-Type": "application/json", "apiToken": "{{apiToken}}"}')
     payload_template = Column(Text, default='''{
-  "model": "internal-km-v1",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are an enterprise ITSM Knowledge Assistant. Context: Application={{application}}, Project={{project}}, Ticket={{ticket_number}}, Priority={{priority}}, Details={{ticket_context}}"
-    },
-    {
-      "role": "user",
-      "content": "{{question}}"
-    }
-  ],
-  "temperature": 0.2
+  "prompt": "{{prompt}}",
+  "index": "{{index}}",
+  "sessionid": "{{sessionid}}",
+  "prompt_objective": "{{prompt_objective}}",
+  "config": {},
+  "reset_context": false,
+  "prompt_prefix": "{{prompt_prefix}}"
 }''')
-    response_json_path = Column(String(100), default="choices[0].message.content")
+    response_json_path = Column(String(100), default="response")
     error_json_path = Column(String(100), default="error.message")
     allow_app_context = Column(Boolean, default=True)
     allow_project_context = Column(Boolean, default=True)

@@ -7935,11 +7935,13 @@ async function renderAiAdminView(container) {
       assistant_name: "ITSM Support Copilot",
       welcome_message: "Hello! I am your GenWizard Support Copilot.",
       km_base_url: "https://internal-km.company.local",
-      api_endpoint: "/api/chat/completions",
-      response_json_path: "choices[0].message.content",
+      api_endpoint: "/api/v2/acnopenai/chatcompletion",
+      response_json_path: "response",
       auth_type: "Bearer",
       timeout_seconds: 30,
-      payload_template: '{\n  "model": "internal-km-v1",\n  "messages": [\n    {\n      "role": "user",\n      "content": "{{question}}"\n    }\n  ]\n}',
+      km_index: "itsm-kb",
+      headers_template: '{\n  "Content-Type": "application/json",\n  "apiToken": "{{apiToken}}"\n}',
+      payload_template: '{\n  "prompt": "{{prompt}}",\n  "index": "{{index}}",\n  "sessionid": "{{sessionid}}",\n  "prompt_objective": "{{prompt_objective}}",\n  "config": {},\n  "reset_context": false,\n  "prompt_prefix": "{{prompt_prefix}}"\n}',
       allow_ticket_context: true,
       pii_filtering: true
     };
@@ -8023,7 +8025,7 @@ async function renderAiAdminView(container) {
                 <i data-lucide="sliders" class="w-4 h-4 text-purple-600"></i>
                 <span>ChatCompletion & KM Integration Parameters</span>
               </h2>
-              <p class="text-xs text-slate-500 mt-0.5">Parameters connect the GenWizard assistant to internal Accenture KM and knowledge stores.</p>
+              <p class="text-xs text-slate-500 mt-0.5">Parameters connect the GenWizard assistant to internal Accenture KM ChatCompletion API and short-token authentication.</p>
             </div>
           </div>
 
@@ -8038,18 +8040,26 @@ async function renderAiAdminView(container) {
               <input type="text" id="ai_km_url" value="${cfg.km_base_url || 'https://internal-km.company.local'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono text-[var(--text-primary)]">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-400 mb-1">API Endpoint Path</label>
-              <input type="text" id="ai_endpoint" value="${cfg.api_endpoint || '/api/chat/completions'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono">
+              <label class="block text-xs font-semibold text-slate-400 mb-1">ChatCompletion Endpoint Path</label>
+              <input type="text" id="ai_endpoint" value="${cfg.api_endpoint || '/api/v2/acnopenai/chatcompletion'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-400 mb-1">KM Index</label>
+              <input type="text" id="ai_km_index" value="${cfg.km_index || 'itsm-kb'}" placeholder="e.g. itsm-kb" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono">
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-400 mb-1">Response JSON Path</label>
-              <input type="text" id="ai_response_path" value="${cfg.response_json_path || 'choices[0].message.content'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono">
+              <input type="text" id="ai_response_path" value="${cfg.response_json_path || 'response'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono">
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-xs font-semibold text-slate-400 mb-1">Headers Template (JSON with {{apiToken}} placeholder)</label>
+              <textarea id="ai_headers_template" rows="2" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-mono leading-relaxed">${cfg.headers_template || '{\n  "Content-Type": "application/json",\n  "apiToken": "{{apiToken}}"\n}'}</textarea>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-400 mb-1">Auth Type & Timeout (seconds)</label>
               <div class="flex space-x-2">
                 <select id="ai_auth_type" class="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2.5 text-xs font-semibold">
-                  <option value="Bearer" ${cfg.auth_type === 'Bearer' ? 'selected' : ''}>Bearer</option>
+                  <option value="Bearer" ${cfg.auth_type === 'Bearer' ? 'selected' : ''}>Bearer (apiToken header)</option>
                   <option value="Basic" ${cfg.auth_type === 'Basic' ? 'selected' : ''}>Basic</option>
                   <option value="None" ${cfg.auth_type === 'None' ? 'selected' : ''}>None</option>
                 </select>
@@ -8059,8 +8069,11 @@ async function renderAiAdminView(container) {
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-slate-400 mb-1">Payload JSON Template (Supports {{question}}, {{ticket_number}}, {{application}}, {{context}})</label>
-            <textarea id="ai_payload_template" rows="7" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 text-xs font-mono leading-relaxed">${cfg.payload_template || ''}</textarea>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-semibold text-slate-400">Payload JSON Template (Supports {{prompt}}, {{index}}, {{sessionid}}, {{prompt_objective}}, {{config}}, {{reset_context}}, {{prompt_prefix}})</label>
+              <span class="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">Customizable by Admin</span>
+            </div>
+            <textarea id="ai_payload_template" rows="10" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 text-xs font-mono leading-relaxed">${cfg.payload_template || '{\n  "prompt": "{{prompt}}",\n  "index": "{{index}}",\n  "sessionid": "{{sessionid}}",\n  "prompt_objective": "{{prompt_objective}}",\n  "config": {},\n  "reset_context": false,\n  "prompt_prefix": "{{prompt_prefix}}"\n}'}</textarea>
           </div>
 
           <div class="pt-3 border-t border-[var(--border-color)] flex flex-wrap items-center justify-between gap-3">
@@ -8162,17 +8175,18 @@ async function testAiConnectionLive() {
 
 async function saveAiConfig() {
   const payload = {
-    km_base_url: document.getElementById('ai_km_url').value,
-    api_endpoint: document.getElementById('ai_endpoint').value,
-    response_json_path: document.getElementById('ai_response_path').value,
-    auth_type: document.getElementById('ai_auth_type').value,
-    timeout_seconds: parseInt(document.getElementById('ai_timeout').value) || 30,
-    payload_template: document.getElementById('ai_payload_template').value,
-    allow_ticket_context: document.getElementById('ai_allow_ticket_ctx').checked,
-    pii_filtering: document.getElementById('ai_pii_filter').checked,
+    km_base_url: document.getElementById('ai_km_url')?.value.trim(),
+    api_endpoint: document.getElementById('ai_endpoint')?.value.trim() || '/api/v2/acnopenai/chatcompletion',
+    response_json_path: document.getElementById('ai_response_path')?.value.trim() || 'response',
+    auth_type: document.getElementById('ai_auth_type')?.value || 'Bearer',
+    km_index: document.getElementById('ai_km_index')?.value.trim() || 'itsm-kb',
+    timeout_seconds: parseInt(document.getElementById('ai_timeout')?.value) || 30,
+    headers_template: document.getElementById('ai_headers_template')?.value.trim() || '{\n  "Content-Type": "application/json",\n  "apiToken": "{{apiToken}}"\n}',
+    payload_template: document.getElementById('ai_payload_template')?.value.trim(),
+    allow_ticket_context: document.getElementById('ai_allow_ticket_ctx')?.checked,
+    pii_filtering: document.getElementById('ai_pii_filter')?.checked,
     welcome_message: 'Hello! I am your GenWizard Support Copilot.',
-    assistant_name: 'GenWizard Support Copilot',
-    headers_template: '{"Content-Type": "application/json"}'
+    assistant_name: 'GenWizard Support Copilot'
   };
 
   try {
@@ -11540,7 +11554,7 @@ async function renderConsulConfigView(container) {
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="block font-semibold text-slate-400 mb-1">API Endpoint</label>
-                <input id="kmEndpointInput" type="text" value="${kmConfig.api_endpoint || '/api/chat/completions'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 font-mono text-xs" />
+                <input id="kmEndpointInput" type="text" value="${kmConfig.api_endpoint || '/api/v2/acnopenai/chatcompletion'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 font-mono text-xs" />
               </div>
               <div>
                 <label class="block font-semibold text-slate-400 mb-1">KM Index *</label>

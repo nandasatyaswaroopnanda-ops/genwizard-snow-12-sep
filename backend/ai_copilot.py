@@ -607,6 +607,8 @@ class InternalChatCompletionProvider(KnowledgeProvider):
                 endpoint = f"{config.km_base_url.rstrip('/')}/atr-gateway/identity-management/api/v1/auth/token?useDeflate=true"
             else:
                 return ""
+        elif endpoint.startswith("/"):
+            endpoint = f"{(config.km_base_url or '').rstrip('/')}{endpoint}"
 
         username = resolve_secret(config.km_im_client_id or config.username or "admin")
         password = resolve_secret(config.km_im_client_secret or config.password or "")
@@ -638,7 +640,7 @@ class InternalChatCompletionProvider(KnowledgeProvider):
             if isinstance(data, dict):
                 token = extract_json_path(data, config.km_im_token_json_path or "token")
                 if not token:
-                    token = data.get("token") or data.get("access_token") or data.get("short_token") or data.get("shortToken")
+                    token = data.get("token") or data.get("access_token") or data.get("short_token") or data.get("shortToken") or data.get("apiToken")
             elif isinstance(data, str) and data:
                 token = data
             elif response.text:
@@ -724,18 +726,34 @@ class InternalChatCompletionProvider(KnowledgeProvider):
 
         # Interpolate Payload Template
         # KM requires a two-stage call: authenticate to IM, then put the
-        # resulting short-lived token in the KM payload. Never persist it.
+        # resulting short-lived token in the KM payload and/or headers. Never persist it.
         short_token = ""
         try:
             short_token = await self._get_km_short_token(config)
         except Exception as exc:
             logger.warning("KM IM short-token request failed: %s", exc)
 
+        token_to_use = short_token
+        if not token_to_use and config.auth_token:
+            token_val = resolve_secret(config.auth_token)
+            token_to_use = token_val
+
+        # Escape question for valid JSON insertion
+        clean_q_json = json.dumps(clean_question)[1:-1]
+
         template_vars = {
-            "question": clean_question.replace('"', '\\"'),
+            "prompt": clean_q_json,
+            "question": clean_q_json,
+            "index": str(config.km_index or "itsm-kb"),
+            "km_index": str(config.km_index or "itsm-kb"),
+            "sessionid": str(conversation_id),
+            "conversation_id": str(conversation_id),
+            "prompt_objective": "itsm_support_troubleshooting",
+            "prompt_prefix": f"You are an enterprise ITSM Knowledge Assistant. Application={ctx.get('application', 'None')}, Project={ctx.get('project', 'None')}, Ticket={ctx.get('ticket_number', 'None')}.",
+            "reset_context": "false",
+            "config": "{}",
             "user_id": str(user.get("id", "")),
             "user_name": str(user.get("full_name", "")),
-            "conversation_id": conversation_id,
             "application": str(ctx.get("application", "None")),
             "project": str(ctx.get("project", "None")),
             "ticket_number": str(ctx.get("ticket_number", "None")),
@@ -749,13 +767,23 @@ class InternalChatCompletionProvider(KnowledgeProvider):
             "assigned_to": str(ctx.get("assigned_to", "")),
             "work_notes": work_notes_summary.replace('"', '\\"'),
             "ticket_context": json.dumps(ctx) if config.allow_ticket_context else "{}",
-            "timestamp": datetime.datetime.utcnow().isoformat()
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "short_token": token_to_use or "",
+            "apiToken": token_to_use or "",
+            "token": token_to_use or ""
         }
-        template_vars["short_token"] = short_token
 
-        interpolated_payload = config.payload_template
+        interpolated_payload = config.payload_template or '''{
+  "prompt": "{{prompt}}",
+  "index": "{{index}}",
+  "sessionid": "{{sessionid}}",
+  "prompt_objective": "{{prompt_objective}}",
+  "config": {},
+  "reset_context": false,
+  "prompt_prefix": "{{prompt_prefix}}"
+}'''
         for k, v in template_vars.items():
-            interpolated_payload = interpolated_payload.replace(f"{{{{{k}}}}}", v)
+            interpolated_payload = interpolated_payload.replace(f"{{{{{k}}}}}", str(v))
 
         # Attempt to call External ChatCompletion API if configured and reachable
         content = ""
@@ -765,24 +793,27 @@ class InternalChatCompletionProvider(KnowledgeProvider):
         latency_ms = 0
         success = True
 
-        full_url = f"{config.km_base_url.rstrip('/')}/{config.api_endpoint.lstrip('/')}"
+        endpoint_path = config.api_endpoint or "/api/v2/acnopenai/chatcompletion"
+        if endpoint_path.startswith("http://") or endpoint_path.startswith("https://"):
+            full_url = endpoint_path
+        else:
+            full_url = f"{(config.km_base_url or '').rstrip('/')}/{endpoint_path.lstrip('/')}"
+
+        headers_str = config.headers_template or '{"Content-Type": "application/json", "apiToken": "{{apiToken}}"}'
+        for k, v in template_vars.items():
+            headers_str = headers_str.replace(f"{{{{{k}}}}}", str(v))
+
         headers = {}
         try:
-            headers = json.loads(config.headers_template or "{}")
+            headers = json.loads(headers_str)
         except Exception:
             headers = {"Content-Type": "application/json"}
 
-        # Inject short token into Authorization header if obtained from IM
-        if short_token:
-            headers["Authorization"] = f"Bearer {short_token}"
-        elif config.auth_type == "Bearer" and config.auth_token:
-            # Fallback: use static Bearer token from config
-            token_val = config.auth_token
-            if token_val.startswith("env:"):
-                import os
-                token_val = os.getenv(token_val[4:], "")
-            if token_val:
-                headers["Authorization"] = f"Bearer {token_val}"
+        # Inject token into headers: apiToken (per user specification) and Authorization
+        if token_to_use:
+            headers["apiToken"] = token_to_use
+            if "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {token_to_use}"
 
         external_call_failed = False
         try:
@@ -797,11 +828,28 @@ class InternalChatCompletionProvider(KnowledgeProvider):
                 latency_ms = int((time.time() - start_time) * 1000)
 
                 if resp.status_code == 200:
-                    resp_json = resp.json()
-                    extracted = extract_json_path(resp_json, config.response_json_path)
+                    try:
+                        resp_json = resp.json()
+                    except Exception:
+                        resp_json = None
+
+                    extracted = None
+                    if isinstance(resp_json, dict):
+                        if config.response_json_path:
+                            extracted = extract_json_path(resp_json, config.response_json_path)
+                        if not extracted:
+                            for candidate in ["response", "answer", "result", "choices[0].message.content", "content", "data.response", "output", "text"]:
+                                extracted = extract_json_path(resp_json, candidate)
+                                if extracted:
+                                    break
+                    elif isinstance(resp_json, str) and resp_json:
+                        extracted = resp_json
+                    elif resp.text:
+                        extracted = resp.text.strip()
+
                     if extracted:
                         content = str(extracted)
-                        token_count = resp_json.get("usage", {}).get("total_tokens", len(content.split()))
+                        token_count = resp_json.get("usage", {}).get("total_tokens", len(content.split())) if isinstance(resp_json, dict) else len(content.split())
                     else:
                         external_call_failed = True
                 else:
@@ -860,30 +908,57 @@ class InternalChatCompletionProvider(KnowledgeProvider):
 
     async def test_connection(self, config: AIConfiguration) -> Dict[str, Any]:
         start = time.time()
-        full_url = f"{config.km_base_url.rstrip('/')}/{config.api_endpoint.lstrip('/')}"
-        headers = {}
+        endpoint_path = config.api_endpoint or "/api/v2/acnopenai/chatcompletion"
+        if endpoint_path.startswith("http://") or endpoint_path.startswith("https://"):
+            full_url = endpoint_path
+        else:
+            full_url = f"{(config.km_base_url or '').rstrip('/')}/{endpoint_path.lstrip('/')}"
+
+        short_token = ""
         try:
-            headers = json.loads(config.headers_template or "{}")
+            short_token = await self._get_km_short_token(config)
+        except Exception as exc:
+            logger.info("KM IM test token fetch note: %s", exc)
+
+        token_to_use = short_token or resolve_secret(config.auth_token or "")
+
+        headers_str = config.headers_template or '{"Content-Type": "application/json", "apiToken": "{{apiToken}}"}'
+        if token_to_use:
+            headers_str = headers_str.replace("{{apiToken}}", token_to_use).replace("{{token}}", token_to_use)
+        try:
+            headers = json.loads(headers_str)
         except Exception:
             headers = {"Content-Type": "application/json"}
 
-        if config.auth_type == "Bearer" and config.auth_token:
-            headers["Authorization"] = f"Bearer {config.auth_token}"
+        if token_to_use:
+            headers["apiToken"] = token_to_use
+            if "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {token_to_use}"
 
         try:
+            test_body = {
+                "prompt": "ping",
+                "index": config.km_index or "itsm-kb",
+                "sessionid": "test-session",
+                "prompt_objective": "test_connectivity",
+                "config": {},
+                "reset_context": False,
+                "prompt_prefix": "Test connection"
+            }
             async with httpx.AsyncClient(timeout=float(min(config.timeout_seconds, 5))) as client:
                 resp = await client.request(
-                    method="GET", # or ping endpoint
+                    method="GET" if config.http_method == "GET" else "POST",
                     url=full_url,
-                    headers=headers
+                    headers=headers,
+                    content=json.dumps(test_body) if config.http_method != "GET" else None
                 )
                 latency = int((time.time() - start) * 1000)
                 return {
-                    "success": resp.status_code in [200, 401, 403, 405],
+                    "success": resp.status_code in [200, 201, 400, 401, 403, 405],
                     "status_code": resp.status_code,
                     "response_time_ms": latency,
                     "message": f"Connected to {full_url}. HTTP Status {resp.status_code}",
-                    "diagnostic": "Endpoint reachable"
+                    "diagnostic": "Endpoint reachable" + (f" (apiToken acquired: {short_token[:8]}...)" if short_token else "")
                 }
         except Exception as e:
             latency = int((time.time() - start) * 1000)

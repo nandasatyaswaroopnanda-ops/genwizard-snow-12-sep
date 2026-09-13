@@ -50,6 +50,7 @@ class AIConfigUpdateSchema(BaseModel):
     headers_template: str
     payload_template: str
     response_json_path: str
+    km_index: Optional[str] = "itsm-kb"
     allow_app_context: bool = True
     allow_project_context: bool = True
     allow_ticket_context: bool = True
@@ -99,6 +100,8 @@ def update_ai_configuration(payload: AIConfigUpdateSchema, db: Session = Depends
     cfg.headers_template = payload.headers_template
     cfg.payload_template = payload.payload_template
     cfg.response_json_path = payload.response_json_path
+    if payload.km_index is not None:
+        cfg.km_index = payload.km_index
     cfg.allow_app_context = payload.allow_app_context
     cfg.allow_project_context = payload.allow_project_context
     cfg.allow_ticket_context = payload.allow_ticket_context
