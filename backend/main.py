@@ -60,6 +60,7 @@ async def itsm_subpath_middleware(request: Request, call_next):
         target_url = "/itsm/" + (f"?{qs}" if qs else "")
         return RedirectResponse(url=target_url, status_code=307)
     elif path.startswith("/itsm/"):
+        request.state.is_itsm = True
         request.scope["path"] = path[len("/itsm"):]
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -70,10 +71,10 @@ async def itsm_subpath_middleware(request: Request, call_next):
         "CONTENT_SECURITY_POLICY",
         (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' blob: data: https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "font-src 'self' data: blob: https://cdn.jsdelivr.net; "
-            "img-src 'self' data: blob: https://cdn.jsdelivr.net https://fastapi.tiangolo.com; "
+            "script-src 'self' 'unsafe-inline' blob: data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data: blob:; "
+            "img-src 'self' data: blob:; "
             "connect-src 'self' data: blob:; "
             "frame-src 'self'; "
             "frame-ancestors 'self';"
@@ -374,7 +375,7 @@ async def custom_swagger_ui_html(req: Request):
     path = req.url.path
     if req.headers.get("x-forwarded-prefix"):
         prefix = req.headers.get("x-forwarded-prefix").rstrip("/")
-    elif path.startswith("/itsm"):
+    elif getattr(req.state, "is_itsm", False) or path.startswith("/itsm"):
         prefix = "/itsm"
     elif root_path:
         prefix = root_path
@@ -386,9 +387,9 @@ async def custom_swagger_ui_html(req: Request):
         openapi_url=openapi_url,
         title="GenWizard Support Portal — Swagger UI & Automation",
         oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
-        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
-        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
-        swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+        swagger_js_url=f"{prefix}/vendor/swagger/swagger-ui-bundle.js",
+        swagger_css_url=f"{prefix}/vendor/swagger/swagger-ui.css",
+        swagger_favicon_url="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
         swagger_ui_parameters={
             "persistAuthorization": True,
             "displayRequestDuration": True,
@@ -431,13 +432,13 @@ async def custom_swagger_ui_html(req: Request):
 async def custom_redoc_html(req: Request):
     root_path = req.scope.get("root_path", "").rstrip("/")
     path = req.url.path
-    prefix = "/itsm" if path.startswith("/itsm") else root_path
+    prefix = "/itsm" if (getattr(req.state, "is_itsm", False) or path.startswith("/itsm")) else root_path
     openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
     res = get_redoc_html(
         openapi_url=openapi_url,
         title="GenWizard Support Portal — ReDoc",
-        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
-        redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
+        redoc_js_url=f"{prefix}/vendor/swagger/redoc.standalone.js",
+        redoc_favicon_url="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>"
     )
     hide_redoc_css = "<style> a[href*='openapi.json'], button:has-text('Download') { display: none !important; } </style>\n"
     content = res.body.decode("utf-8").replace("</head>", f"{hide_redoc_css}\n</head>")

@@ -175,13 +175,17 @@ def test_swagger_and_automation_openapi_exposure(client):
     docs_res = client.get("/docs")
     assert docs_res.status_code == 200
     assert "Swagger UI" in docs_res.text
+    assert "/vendor/swagger/swagger-ui-bundle.js" in docs_res.text
+    assert "/vendor/swagger/swagger-ui.css" in docs_res.text
     csp = docs_res.headers.get("content-security-policy", "")
-    assert "https://cdn.jsdelivr.net" in csp
-    assert "https://fastapi.tiangolo.com" in csp
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "cdn.jsdelivr.net" not in csp
 
     itsm_docs_res = client.get("/itsm/docs")
     assert itsm_docs_res.status_code == 200
     assert "Swagger UI" in itsm_docs_res.text
+    assert "/itsm/vendor/swagger/swagger-ui-bundle.js" in itsm_docs_res.text
 
     # 2. OpenAPI Schema endpoints
     openapi_res = client.get("/openapi.json")
