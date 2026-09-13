@@ -217,3 +217,63 @@ def test_swagger_and_automation_openapi_exposure(client):
     itsm_openapi_res = client.get("/itsm/openapi.json")
     assert itsm_openapi_res.status_code == 200
 
+
+def test_redirects_and_routes_csp_compliance(client):
+    """Verify that all application redirects and routes include clean CSP headers with no invalid font-src blob."""
+    # 1. /itsm redirect
+    itsm_redirect = client.get("/itsm", follow_redirects=False)
+    assert itsm_redirect.status_code == 307
+    csp = itsm_redirect.headers.get("content-security-policy", "")
+    assert "font-src 'self' data:;" in csp
+    assert "font-src 'self' data: blob:;" not in csp
+    assert "blob:" not in csp.split("font-src")[1].split(";")[0]
+
+    # 2. ReDoc endpoints
+    redoc_res = client.get("/redoc")
+    assert redoc_res.status_code == 200
+    assert "<script>" not in redoc_res.text
+    assert "<style>" not in redoc_res.text
+    assert "/vendor/swagger/redoc-custom.css" in redoc_res.text
+    assert "/vendor/swagger/redoc.standalone.js" in redoc_res.text
+
+    itsm_redoc = client.get("/itsm/redoc")
+    assert itsm_redoc.status_code == 200
+    assert "<script>" not in itsm_redoc.text
+    assert "<style>" not in itsm_redoc.text
+
+    # 3. SSO route
+    sso_res = client.get("/sso", follow_redirects=False)
+    assert sso_res.status_code == 200
+    csp_sso = sso_res.headers.get("content-security-policy", "")
+    assert "font-src 'self' data:;" in csp_sso
+    assert "blob:" not in csp_sso.split("font-src")[1].split(";")[0]
+
+
+def test_identity_service_docs_and_csp():
+    """Verify that the Identity Management microservice also uses self-hosted Swagger with no inline scripts and clean CSP."""
+    from fastapi.testclient import TestClient
+    from identity_service.main import app as identity_app
+    im_client = TestClient(identity_app)
+
+    # 1. /docs on Identity service
+    im_docs = im_client.get("/docs")
+    assert im_docs.status_code == 200
+    assert "Genwizard Identity Management — Swagger UI" in im_docs.text
+    assert "/vendor/swagger/swagger-ui-bundle.js" in im_docs.text
+    assert "<script>" not in im_docs.text
+    assert "<style>" not in im_docs.text
+    im_csp = im_docs.headers.get("content-security-policy", "")
+    assert "font-src 'self' data:;" in im_csp
+    assert "blob:" not in im_csp.split("font-src")[1].split(";")[0]
+
+    # 2. /api/id/docs
+    im_subdocs = im_client.get("/api/id/docs")
+    assert im_subdocs.status_code == 200
+    assert "<script>" not in im_subdocs.text
+
+    # 3. OpenAPI schema
+    im_openapi = im_client.get("/openapi.json")
+    assert im_openapi.status_code == 200
+    assert "Genwizard ITSM — Enterprise Identity Management Service" in im_openapi.json()["info"]["title"]
+
+

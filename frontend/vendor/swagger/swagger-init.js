@@ -1,6 +1,12 @@
 (function() {
   function initSwagger() {
-    var prefix = window.location.pathname.startsWith('/itsm') ? '/itsm' : '';
+    var path = window.location.pathname;
+    var prefix = '';
+    if (path.startsWith('/itsm')) {
+      prefix = '/itsm';
+    } else if (path.startsWith('/api/id')) {
+      prefix = '/api/id';
+    }
     var openapiUrl = prefix + '/openapi.json';
 
     if (typeof window.SwaggerUIBundle === 'function') {

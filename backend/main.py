@@ -58,11 +58,12 @@ async def itsm_subpath_middleware(request: Request, call_next):
     if path == "/itsm":
         qs = request.scope.get("query_string", b"").decode("utf-8")
         target_url = "/itsm/" + (f"?{qs}" if qs else "")
-        return RedirectResponse(url=target_url, status_code=307)
-    elif path.startswith("/itsm/"):
-        request.state.is_itsm = True
-        request.scope["path"] = path[len("/itsm"):]
-    response = await call_next(request)
+        response = RedirectResponse(url=target_url, status_code=307)
+    else:
+        if path.startswith("/itsm/"):
+            request.state.is_itsm = True
+            request.scope["path"] = path[len("/itsm"):]
+        response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"

@@ -7,9 +7,10 @@ import datetime
 import xml.etree.ElementTree as ET
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, Depends, HTTPException, Header, Response, status
+from fastapi import FastAPI, Depends, HTTPException, Header, Response, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -36,7 +37,8 @@ app = FastAPI(
     title="Genwizard ITSM — Enterprise Identity Management Service",
     description="Dedicated microservice for Local Authentication, Roles & Custom Groups, Active Directory Mapping, and B2B/B2C SSO with SAML 2.0 Metadata.",
     version="1.0.0",
-    docs_url="/docs",
+    docs_url=None,
+    redoc_url=None,
     openapi_url="/openapi.json"
 )
 
@@ -47,6 +49,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def identity_security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    csp_header = os.getenv(
+        "CONTENT_SECURITY_POLICY",
+        (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' blob: data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' data: blob:; "
+            "frame-src 'self'; "
+            "frame-ancestors 'self';"
+        )
+    )
+    if csp_header:
+        response.headers["Content-Security-Policy"] = csp_header
+    return response
+
+frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+vendor_dir = os.path.join(frontend_dir, "vendor")
+if os.path.exists(vendor_dir):
+    app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
 
 # ── Startup & DB Bootstrapping ──
 
@@ -1485,6 +1516,73 @@ def import_idp_metadata(payload: Dict[str, str], db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to parse IdP metadata: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to parse IdP metadata XML: {str(e)}")
+
+
+
+# ─────────────────────────────────────────────────────────────
+# Custom Self-Hosted Swagger & ReDoc (Zero Inline Scripts/Styles)
+# ─────────────────────────────────────────────────────────────
+@app.get("/docs", include_in_schema=False)
+@app.get("/api/id/docs", include_in_schema=False)
+async def identity_swagger_ui_html(req: Request):
+    root_path = req.scope.get("root_path", "").rstrip("/")
+    path = req.url.path
+    if req.headers.get("x-forwarded-prefix"):
+        prefix = req.headers.get("x-forwarded-prefix").rstrip("/")
+    elif path.startswith("/api/id"):
+        prefix = "/api/id"
+    elif root_path:
+        prefix = root_path
+    else:
+        prefix = ""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Genwizard Identity Management — Swagger UI</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="stylesheet" href="{prefix}/vendor/swagger/swagger-ui.css">
+  <link rel="stylesheet" href="{prefix}/vendor/swagger/swagger-custom.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="{prefix}/vendor/swagger/swagger-ui-bundle.js"></script>
+  <script src="{prefix}/vendor/swagger/swagger-ui-standalone-preset.js"></script>
+  <script src="{prefix}/vendor/swagger/swagger-init.js"></script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/redoc", include_in_schema=False)
+@app.get("/api/id/redoc", include_in_schema=False)
+async def identity_redoc_html(req: Request):
+    root_path = req.scope.get("root_path", "").rstrip("/")
+    path = req.url.path
+    prefix = "/api/id" if path.startswith("/api/id") else root_path
+    openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Genwizard Identity Management — ReDoc</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="stylesheet" href="{prefix}/vendor/swagger/redoc-custom.css">
+</head>
+<body>
+  <redoc spec-url="{openapi_url}" hide-download-button="true"></redoc>
+  <script src="{prefix}/vendor/swagger/redoc.standalone.js"></script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/api/id/openapi.json", include_in_schema=False)
+def get_identity_openapi():
+    return JSONResponse(app.openapi())
 
 
 if __name__ == "__main__":
