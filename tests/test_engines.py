@@ -442,3 +442,103 @@ def test_km_short_token_and_chatcompletion_flow(test_db):
             assert "Payment API" in body_dict["prompt_prefix"]
 
     asyncio.run(run_test())
+
+
+def test_copilot_ticket_resolution_worknotes_and_closenotes(test_db):
+    import asyncio
+    from backend.models import Incident, TicketWorkNote, TicketComment, User
+    from backend.ai_copilot import InternalChatCompletionProvider, AIConfiguration
+
+    user = User(
+        employee_id="EMP-AI-100",
+        username="lead_engineer",
+        full_name="Alex Lead",
+        email="alex@company.com",
+        role="support_member",
+        is_local=True
+    )
+    test_db.add(user)
+    test_db.flush()
+
+    inc = Incident(
+        number="INC0008888",
+        short_description="Checkout Service Intermittent Connection Timeout",
+        description="Checkout service failing intermittently with 504 gateway timeout under peak load.",
+        priority="P1",
+        status="Resolved",
+        close_category="Database / Connection Pool",
+        close_subcategory="Pool Exhaustion",
+        resolution_code="Solved (Permanently)",
+        resolution_notes="Increased maximum pool size from 20 to 80 and adjusted idle connection reaper.",
+        ado_number="ADO-9912"
+    )
+    test_db.add(inc)
+    test_db.flush()
+
+    note = TicketWorkNote(
+        ticket_type="incident",
+        ticket_id=inc.id,
+        user_id=user.id,
+        note="Identified bottleneck in connection pool. PostgreSQL pg_stat_activity shows max_connections reached."
+    )
+    comment = TicketComment(
+        ticket_type="incident",
+        ticket_id=inc.id,
+        user_id=user.id,
+        comment="Engineering is applying configuration patch to increase pool limits."
+    )
+    test_db.add_all([note, comment])
+    test_db.commit()
+
+    provider = InternalChatCompletionProvider()
+    cfg = AIConfiguration(km_base_url="https://km.enterprise.corp", api_endpoint="/api/v2/acnopenai/chatcompletion")
+
+    async def run_checks():
+        # 1. Summarize ticket
+        resp_sum = await provider.chat(
+            db=test_db,
+            config=cfg,
+            question="Summarize INC0008888",
+            conversation_id="conv-1",
+            ticket_context={"ticket_number": "INC0008888"}
+        )
+        assert "INC0008888" in resp_sum["content"]
+        assert "Checkout Service Intermittent Connection Timeout" in resp_sum["content"]
+        assert "Identified bottleneck in connection pool" in resp_sum["content"]
+        assert "Engineering is applying configuration patch" in resp_sum["content"]
+        assert "Increased maximum pool size from 20 to 80" in resp_sum["content"]
+
+        # 2. Ask specifically for close notes
+        resp_close = await provider.chat(
+            db=test_db,
+            config=cfg,
+            question="What are the close notes for INC0008888?",
+            conversation_id="conv-2"
+        )
+        assert "Resolution & Closure Details" in resp_close["content"]
+        assert "Increased maximum pool size from 20 to 80" in resp_close["content"]
+        assert "Solved (Permanently)" in resp_close["content"]
+
+        # 3. Ask specifically for work notes
+        resp_notes = await provider.chat(
+            db=test_db,
+            config=cfg,
+            question="Show work notes of INC0008888",
+            conversation_id="conv-3"
+        )
+        assert "Chronological Engineering Work Notes" in resp_notes["content"]
+        assert "Identified bottleneck in connection pool" in resp_notes["content"]
+
+        # 4. Search by issue keyword when viewing ticket
+        resp_search = await provider.chat(
+            db=test_db,
+            config=cfg,
+            question="What was done in this ticket?",
+            conversation_id="conv-4",
+            ticket_context={"ticket_number": "INC0008888"}
+        )
+        assert "INC0008888" in resp_search["content"]
+        assert "Resolution Code" in resp_search["content"]
+
+    asyncio.run(run_checks())
+

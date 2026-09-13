@@ -187,6 +187,44 @@ function ensureFormFieldLabels(root) {
         }
       }
     }
+
+    // 4. Scan all <label> elements to ensure none are unassociated with a field
+    var allLabels = root.querySelectorAll ? root.querySelectorAll('label') : [];
+    for (var j = 0; j < allLabels.length; j++) {
+      var lbl = allLabels[j];
+      var targetFor = lbl.getAttribute('for');
+      if (targetFor && document.getElementById(targetFor)) continue;
+
+      // If wrapping an input/select/textarea
+      var innerField = lbl.querySelector('input, select, textarea');
+      if (innerField) {
+        if (!innerField.id) innerField.id = (innerField.getAttribute('name') || 'fld') + '_' + Math.random().toString(36).substr(2, 9);
+        lbl.setAttribute('for', innerField.id);
+        continue;
+      }
+
+      // Check siblings or container
+      var siblingField = null;
+      var siblingEl = lbl.nextElementSibling;
+      while (siblingEl && !siblingField) {
+        if (siblingEl.matches && siblingEl.matches('input, select, textarea')) {
+          siblingField = siblingEl;
+        } else if (siblingEl.querySelector) {
+          siblingField = siblingEl.querySelector('input, select, textarea');
+        }
+        siblingEl = siblingEl.nextElementSibling;
+      }
+      if (!siblingField && lbl.parentElement) {
+        siblingField = lbl.parentElement.querySelector('input, select, textarea');
+      }
+      if (siblingField) {
+        if (!siblingField.id) siblingField.id = (siblingField.getAttribute('name') || 'fld') + '_' + Math.random().toString(36).substr(2, 9);
+        lbl.setAttribute('for', siblingField.id);
+        if (!siblingField.hasAttribute('aria-label') && lbl.textContent) {
+          siblingField.setAttribute('aria-label', lbl.textContent.replace(/[*:\s]+/g, ' ').trim());
+        }
+      }
+    }
   } catch (_) {}
 }
 
@@ -317,6 +355,29 @@ document.addEventListener('DOMContentLoaded', function() {
     // Plain function name without parens
     if (typeof window[actionStr] === 'function') {
       window[actionStr].call(targetEl);
+      return;
+    }
+
+    // GenWizard Copilot Drawer actions
+    if (actionStr === 'openFloatingAiDrawer' || actionStr === 'toggleFloatingAiDrawer') {
+      var d = document.getElementById('aiDrawer');
+      if (d) {
+        d.classList.remove('hidden');
+        var inp = document.getElementById('drawerInput');
+        if (inp) setTimeout(function() { inp.focus(); }, 60);
+      }
+      return;
+    }
+    if (actionStr === 'closeFloatingAiDrawer') {
+      var d = document.getElementById('aiDrawer');
+      if (d) d.classList.add('hidden');
+      return;
+    }
+    if (actionStr === 'startNewDrawerChat') {
+      var box = document.getElementById('drawerMessages');
+      if (box) {
+        box.innerHTML = '<div class="p-2.5 rounded-lg bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">Started new Copilot session. Ask me anything.</div>';
+      }
       return;
     }
 

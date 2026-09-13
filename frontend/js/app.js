@@ -8381,6 +8381,12 @@ function toggleFloatingAiDrawer(force) {
 window.toggleFloatingAiDrawer = toggleFloatingAiDrawer;
 window.openFloatingAiDrawer = () => toggleFloatingAiDrawer(true);
 window.closeFloatingAiDrawer = () => toggleFloatingAiDrawer(false);
+window.startNewDrawerChat = startNewDrawerChat;
+window.sendQuickPrompt = sendQuickPrompt;
+window.submitDrawerQuestion = submitDrawerQuestion;
+window.startNewFullScreenChat = startNewFullScreenChat;
+window.submitFullScreenAiQuestion = submitFullScreenAiQuestion;
+window.selectAiConversation = selectAiConversation;
 
 function updateDrawerTicketContext(ctx) {
   const bar = document.getElementById('drawerTicketContextBar');

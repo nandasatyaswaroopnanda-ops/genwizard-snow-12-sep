@@ -9,6 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Tuple
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, func
 from backend.database import get_mongo_db
 from backend.models import (
     AIConfiguration, AIAuditLog, AIConversation, AIMessage, Incident,
@@ -17,6 +18,17 @@ from backend.models import (
 )
 
 logger = logging.getLogger("ai_copilot")
+
+STOP_WORDS = {
+    "what", "when", "where", "which", "who", "whom", "this", "that", "these", "those",
+    "have", "has", "had", "having", "with", "about", "against", "between", "into",
+    "through", "during", "before", "after", "above", "below", "from", "down", "then",
+    "once", "here", "there", "why", "how", "all", "any", "both", "each", "few",
+    "more", "most", "other", "some", "such", "only", "same", "than", "too", "very",
+    "can", "will", "just", "should", "now", "could", "would", "shall", "might",
+    "must", "please", "tell", "show", "give", "help", "find", "check", "need", "know",
+    "were", "been", "being", "does", "done", "doing"
+}
 
 def resolve_secret(value: Optional[str]) -> str:
     """Resolve env: and Consul KV references without returning secrets to clients.
@@ -106,7 +118,7 @@ class EnterpriseKnowledgeFallback:
         short_desc = ctx.get("short_description") or ""
 
         # Check if question explicitly mentions a ticket number like INC0001001, REQ0001001, CHG0001001
-        m_ticket = re.search(r'\b(INC|REQ|CHG)\d{7}\b', question, re.IGNORECASE)
+        m_ticket = re.search(r'\b(INC|REQ|CHG)\d+\b', question, re.IGNORECASE)
         if m_ticket:
             ticket_num = m_ticket.group(0).upper()
 
@@ -121,12 +133,11 @@ class EnterpriseKnowledgeFallback:
                 "#### 🔍 What GenWizard Does Exactly:\n\n"
                 "1. **Full Cross-Project Visibility**:\n"
                 "   - **Incidents, Requests & Changes**: Evaluates tickets from all project workspaces (e.g. *Payment Gateway*, *Core Banking*, *Retail Banking*, *Cloud Platform*).\n"
-                "   - **Internal Engineering Work Notes (`ticket_work_notes`)**: Analyzes internal diagnostic logs, triage assessments, stack traces, and engineer notes to see what has already been attempted.\n"
-                "   - **Customer Comments (`ticket_comments`)**: Understands reported customer symptoms and communications to prevent asking redundant questions.\n"
-                "   - **Close Notes & Root Causes**: Reads resolution notes, close categories, subcategories, and implementation/backout plans to learn from prior fixes.\n\n"
-                "2. **Cross-Project Historical Pattern Matching & Similar Tickets**:\n"
-                "   - When an outage or error occurs (e.g. 502 Bad Gateway, DB connection timeout, pod crashes), it scans closed tickets across all projects to identify identical symptoms and exact steps taken to resolve them.\n"
-                "   - Correlates recent Change Requests (RFCs) that may have triggered service degradations.\n\n"
+                "   - **Work Notes & Discussion Threads**: Ingests chronological engineering work notes (`ticket_work_notes`) and client communications (`ticket_comments`) into every analysis.\n"
+                "   - **Closure & Resolution Notes**: Inspects resolution codes, root cause categories, and closure comments to suggest proven fixes.\n\n"
+                "2. **Real-Time Context Extraction**:\n"
+                "   - Automatically queries the active ticket context or ticket numbers mentioned in chat.\n"
+                "   - Synthesizes complex multi-day outages into concise problem, impact, actions taken, and next steps.\n\n"
                 "3. **Autonomous Assistance & Actions**:\n"
                 "   - **Ticket Summarization**: Condenses multi-day incidents, service requests, or change requests with all work notes, comments, and closure notes into clear Problem, Impact, Actions Taken, and Next Steps.\n"
                 "   - **Work Note Generation**: Formats engineering observations into standardized work notes with one click.\n"
@@ -150,19 +161,20 @@ class EnterpriseKnowledgeFallback:
             route_path = "incidents"
 
             if t_prefix == "INC":
-                t_obj = db.query(Incident).filter(Incident.number == ticket_num).first()
+                t_obj = db.query(Incident).filter(Incident.number.ilike(f"%{ticket_num}%")).first()
                 t_type = "incident"
                 route_path = "incidents"
             elif t_prefix == "REQ":
-                t_obj = db.query(ServiceRequest).filter(ServiceRequest.number == ticket_num).first()
+                t_obj = db.query(ServiceRequest).filter(ServiceRequest.number.ilike(f"%{ticket_num}%")).first()
                 t_type = "request"
                 route_path = "service-requests"
             elif t_prefix == "CHG":
-                t_obj = db.query(ChangeRequest).filter(ChangeRequest.number == ticket_num).first()
+                t_obj = db.query(ChangeRequest).filter(ChangeRequest.number.ilike(f"%{ticket_num}%")).first()
                 t_type = "change"
                 route_path = "change-requests"
 
             if t_obj:
+                ticket_num = t_obj.number
                 app_name = t_obj.application.name if getattr(t_obj, "application", None) else app_name
                 proj_name = t_obj.project.name if getattr(t_obj, "project", None) else "Enterprise"
                 short_desc = t_obj.short_description
@@ -197,53 +209,70 @@ class EnterpriseKnowledgeFallback:
 
                 citations = [{"title": f"{ticket_num}: {short_desc}", "url": f"#/{route_path}/{ticket_num}"}]
 
-                # A. Summarize
-                if any(w in q_lower for w in ["summarize", "summary", "what was done", "investigate", "tell me about"]):
-                    notes_summary = "\n".join([
-                        f"- **[{n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else 'Recent'}] {n.user.full_name if n.user else 'Engineer'}:** {n.note}"
-                        for n in notes
-                    ]) if notes else "_No internal work notes recorded yet._"
+                notes_summary = "\n".join([
+                    f"- **[{n.created_at.strftime('%Y-%m-%d %H:%M') if n.created_at else 'Recent'}] {n.user.full_name if n.user else 'Engineer'}:** {n.note}"
+                    for n in notes
+                ]) if notes else "_No internal work notes recorded yet._"
 
-                    comments_summary = "\n".join([
-                        f"- **[{c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else 'Recent'}] {c.user.full_name if c.user else 'User'}:** {c.comment}"
-                        for c in comments
-                    ]) if comments else "_No customer comments recorded yet._"
+                comments_summary = "\n".join([
+                    f"- **[{c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else 'Recent'}] {c.user.full_name if c.user else 'User'}:** {c.comment}"
+                    for c in comments
+                ]) if comments else "_No customer comments recorded yet._"
 
-                    res_section = ""
-                    if resolution_notes or res_code or close_cat:
-                        res_parts = []
-                        if res_code: res_parts.append(f"• **Resolution Code:** `{res_code}`")
-                        if close_cat: res_parts.append(f"• **Close Category / Subcategory:** `{close_cat}` / `{close_subcat or 'General'}`")
-                        if ado_num: res_parts.append(f"• **Linked Azure DevOps (ADO):** `{ado_num}`")
-                        if resolution_notes: res_parts.append(f"• **Resolution / Close Notes:**\n  > {resolution_notes}")
-                        res_section = "\n#### 🏁 Resolution & Close Notes:\n" + "\n".join(res_parts) + "\n"
+                res_section = ""
+                if resolution_notes or res_code or close_cat:
+                    res_parts = []
+                    if res_code: res_parts.append(f"• **Resolution Code:** `{res_code}`")
+                    if close_cat: res_parts.append(f"• **Close Category / Subcategory:** `{close_cat}` / `{close_subcat or 'General'}`")
+                    if ado_num: res_parts.append(f"• **Linked Azure DevOps (ADO):** `{ado_num}`")
+                    if resolution_notes: res_parts.append(f"• **Resolution / Close Notes:**\n  > {resolution_notes}")
+                    res_section = "\n#### 🏁 Resolution & Close Notes:\n" + "\n".join(res_parts) + "\n"
 
-                    plan_section = ""
-                    if impl_plan or backout_plan or test_plan:
-                        p_parts = []
-                        if impl_plan: p_parts.append(f"• **Implementation Plan:** {impl_plan}")
-                        if backout_plan: p_parts.append(f"• **Backout Plan:** {backout_plan}")
-                        if test_plan: p_parts.append(f"• **Test Plan:** {test_plan}")
-                        plan_section = "\n#### 🛠️ Change Execution Plans:\n" + "\n".join(p_parts) + "\n"
+                plan_section = ""
+                if impl_plan or backout_plan or test_plan:
+                    p_parts = []
+                    if impl_plan: p_parts.append(f"• **Implementation Plan:** {impl_plan}")
+                    if backout_plan: p_parts.append(f"• **Backout Plan:** {backout_plan}")
+                    if test_plan: p_parts.append(f"• **Test Plan:** {test_plan}")
+                    plan_section = "\n#### 🛠️ Change Execution Plans:\n" + "\n".join(p_parts) + "\n"
 
+                # A. Specific query for Close Notes / Closure
+                if any(w in q_lower for w in ["close note", "close notes", "closure note", "closure notes", "resolution note", "resolution notes", "how was it closed", "how was it resolved"]):
+                    close_notes_display = res_section if res_section else "• **Resolution / Close Notes:** No formal closure notes entered yet.\n"
                     return (
-                        f"### 📋 Comprehensive Ticket Summary for {ticket_num}\n\n"
-                        f"• **Ticket Type:** {t_type.capitalize()} Request\n"
+                        f"### 🏁 Resolution & Closure Details for {ticket_num}\n\n"
+                        f"• **Ticket:** [{ticket_num}](#/{route_path}/{ticket_num}) — *{short_desc}*\n"
+                        f"• **Status & Priority:** `{status}` ({priority})\n"
                         f"• **Project / Application:** {proj_name} / {app_name}\n"
-                        f"• **Title:** {short_desc}\n"
-                        f"• **Priority & Status:** {priority} | Status: `{status}`\n"
-                        f"• **Reporter / Requester:** {caller_name}\n"
-                        f"• **Assigned Team:** {assignee} ({group_name})\n"
-                        f"• **Initial Problem Description:**\n  > {t_obj.description}\n\n"
-                        f"#### 📝 Chronological Engineering Work Notes ({len(notes)}):\n{notes_summary}\n\n"
-                        f"#### 💬 Customer Comments & Communications ({len(comments)}):\n{comments_summary}\n"
-                        f"{res_section}{plan_section}\n"
-                        f"• **Current Assessment & Steps:** Ticket is in `{status}` status. "
-                        f"{'All documented verification steps completed successfully.' if status in ['Resolved', 'Closed', 'Completed'] else 'Active investigation in progress. Monitor metrics and log telemetry prior to closure.'}",
+                        f"{close_notes_display}\n"
+                        f"• **Total Notes Recorded:** {len(notes)} work notes, {len(comments)} customer comments.\n"
+                        f"• **Current Assessment:** Ticket is `{status}`.",
                         citations
                     )
 
-                # B. Generate Work Note
+                # B. Specific query for Work Notes (reading notes)
+                if any(w in q_lower for w in ["work note", "work notes", "worknote", "worknotes"]) and not any(w in q_lower for w in ["generate", "draft", "create", "write"]):
+                    return (
+                        f"### 📝 Chronological Engineering Work Notes for {ticket_num}\n\n"
+                        f"• **Ticket:** [{ticket_num}](#/{route_path}/{ticket_num}) — *{short_desc}*\n"
+                        f"• **Project / Application:** {proj_name} / {app_name}\n"
+                        f"• **Status:** `{status}` ({priority})\n\n"
+                        f"{notes_summary}\n\n"
+                        f"*(Ask me to `summarize {ticket_num}` for the complete overview or `draft work note` to formulate a new update)*",
+                        citations
+                    )
+
+                # C. Specific query for Comments
+                if any(w in q_lower for w in ["comment", "comments", "customer communication", "customer messages"]):
+                    return (
+                        f"### 💬 Customer Comments & Communications for {ticket_num}\n\n"
+                        f"• **Ticket:** [{ticket_num}](#/{route_path}/{ticket_num}) — *{short_desc}*\n"
+                        f"• **Requester / Caller:** {caller_name}\n\n"
+                        f"{comments_summary}\n",
+                        citations
+                    )
+
+                # D. Generate Work Note
                 if "work note" in q_lower or "generate work note" in q_lower:
                     now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
                     return (
@@ -255,7 +284,7 @@ class EnterpriseKnowledgeFallback:
                         citations
                     )
 
-                # C. Customer Response
+                # E. Customer Response
                 if "customer response" in q_lower or "draft customer" in q_lower or "customer-friendly" in q_lower:
                     return (
                         f"Dear {caller_name},\n\n"
@@ -267,7 +296,7 @@ class EnterpriseKnowledgeFallback:
                         citations
                     )
 
-                # D. Similar Incidents & Steps Taken for this ticket
+                # F. Similar Incidents & Steps Taken for this ticket
                 if any(k in q_lower for k in ["similar", "find similar", "steps taken", "what was done before"]):
                     sim_query = db.query(Incident).filter(
                         Incident.id != t_obj.id,
@@ -300,6 +329,24 @@ class EnterpriseKnowledgeFallback:
                         + "\n".join(sim_text),
                         citations
                     )
+
+                # G. Comprehensive Ticket Summary (Default for any ticket inquiry)
+                return (
+                    f"### 📋 Comprehensive Ticket Summary for {ticket_num}\n\n"
+                    f"• **Ticket Type:** {t_type.capitalize()} Request\n"
+                    f"• **Project / Application:** {proj_name} / {app_name}\n"
+                    f"• **Title:** {short_desc}\n"
+                    f"• **Priority & Status:** {priority} | Status: `{status}`\n"
+                    f"• **Reporter / Requester:** {caller_name}\n"
+                    f"• **Assigned Team:** {assignee} ({group_name})\n"
+                    f"• **Initial Problem Description:**\n  > {t_obj.description}\n\n"
+                    f"#### 📝 Chronological Engineering Work Notes ({len(notes)}):\n{notes_summary}\n\n"
+                    f"#### 💬 Customer Comments & Communications ({len(comments)}):\n{comments_summary}\n"
+                    f"{res_section}{plan_section}\n"
+                    f"• **Current Assessment & Steps:** Ticket is in `{status}` status. "
+                    f"{'All documented verification steps completed successfully.' if status in ['Resolved', 'Closed', 'Completed'] else 'Active investigation in progress. Monitor metrics and log telemetry prior to closure.'}",
+                    citations
+                )
 
         # ── 3. Cross-Project Search across Incidents, Requests, Changes, Work Notes & Comments ──
         if db and any(term in q_lower for term in [
@@ -410,6 +457,90 @@ class EnterpriseKnowledgeFallback:
 
             lines.append("\n*You can ask me to summarize any of these tickets, draft work notes, or troubleshoot.*")
             return ("\n".join(lines), citations)
+
+        # ── 3.1 Keyword Search across Incidents, Requests, Changes, Work Notes & Close Notes ──
+        if db:
+            words = [w for w in re.findall(r'\b[a-zA-Z0-9_-]{3,}\b', q_lower) if w not in STOP_WORDS]
+            if words:
+                match_incs = db.query(Incident).filter(
+                    or_(*[
+                        or_(
+                            Incident.short_description.ilike(f"%{w}%"),
+                            Incident.description.ilike(f"%{w}%"),
+                            Incident.resolution_notes.ilike(f"%{w}%"),
+                            Incident.close_category.ilike(f"%{w}%")
+                        ) for w in words
+                    ])
+                ).order_by(Incident.created_at.desc()).limit(4).all()
+
+                match_reqs = db.query(ServiceRequest).filter(
+                    or_(*[
+                        or_(
+                            ServiceRequest.short_description.ilike(f"%{w}%"),
+                            ServiceRequest.description.ilike(f"%{w}%")
+                        ) for w in words
+                    ])
+                ).order_by(ServiceRequest.created_at.desc()).limit(3).all()
+
+                match_chgs = db.query(ChangeRequest).filter(
+                    or_(*[
+                        or_(
+                            ChangeRequest.short_description.ilike(f"%{w}%"),
+                            ChangeRequest.description.ilike(f"%{w}%")
+                        ) for w in words
+                    ])
+                ).order_by(ChangeRequest.created_at.desc()).limit(3).all()
+
+                total_matched = len(match_incs) + len(match_reqs) + len(match_chgs)
+                if total_matched == 1:
+                    single_t = match_incs[0] if match_incs else (match_reqs[0] if match_reqs else match_chgs[0])
+                    return EnterpriseKnowledgeFallback.generate_response(question, {"ticket_number": single_t.number}, db=db)
+                elif total_matched > 1:
+                    lines = [f"### 🔍 Relevant Tickets Found Matching \"{question.strip()}\"\n"]
+                    citations = []
+                    item_idx = 1
+                    for inc in match_incs:
+                        proj = inc.project.name if inc.project else "Global"
+                        app = inc.application.name if inc.application else "General"
+                        s_notes = db.query(TicketWorkNote).filter(
+                            TicketWorkNote.ticket_type == "incident",
+                            TicketWorkNote.ticket_id == inc.id
+                        ).order_by(TicketWorkNote.created_at.desc()).limit(2).all()
+                        note_txt = " | ".join([n.note for n in s_notes]) if s_notes else (inc.description or "Active incident under investigation.")
+                        res_txt = inc.resolution_notes or (f"Root cause: {inc.close_category}" if inc.close_category else "In investigation")
+                        lines.append(
+                            f"**{item_idx}. [{inc.number}](#/incidents/{inc.number})** — *{inc.short_description}*\n"
+                            f"- **Project / Application:** {proj} / {app}\n"
+                            f"- **Priority & Status:** `{inc.status}` ({inc.priority})\n"
+                            f"- **Root Cause / Close Category:** `{inc.close_category or 'Infrastructure'}`\n"
+                            f"- **Steps Taken / Work Notes:** {note_txt[:180]}...\n"
+                            f"- **Resolution / Close Notes:** {res_txt[:160]}...\n"
+                        )
+                        citations.append({"title": f"{inc.number}: {inc.short_description}", "url": f"#/incidents/{inc.number}"})
+                        item_idx += 1
+
+                    for req in match_reqs:
+                        proj = req.project.name if req.project else "Global"
+                        lines.append(
+                            f"**{item_idx}. [{req.number}](#/service-requests/{req.number})** — *{req.short_description}*\n"
+                            f"- **Project:** {proj} | Status: `{req.status}` ({req.priority})\n"
+                            f"- **Details:** {req.description[:180]}...\n"
+                        )
+                        citations.append({"title": f"{req.number}: {req.short_description}", "url": f"#/service-requests/{req.number}"})
+                        item_idx += 1
+
+                    for chg in match_chgs:
+                        proj = chg.project.name if chg.project else "Global"
+                        lines.append(
+                            f"**{item_idx}. [{chg.number}](#/change-requests/{chg.number})** — *{chg.short_description}*\n"
+                            f"- **Project:** {proj} | Status: `{chg.change_status or 'Active'}` ({chg.priority})\n"
+                            f"- **Implementation Plan:** {(chg.implementation_plan or chg.description)[:180]}...\n"
+                        )
+                        citations.append({"title": f"{chg.number}: {chg.short_description}", "url": f"#/change-requests/{chg.number}"})
+                        item_idx += 1
+
+                    lines.append("\n*You can ask me to summarize any of these tickets to view all chronological work notes, comments, and close notes.*")
+                    return ("\n".join(lines), citations)
 
         # ── 4. Generic IT, Software Engineering & Architecture Answers ──
         # When KM ChatCompletion API is unconfigured or unreachable, provide intelligent technical responses
@@ -650,6 +781,117 @@ class InternalChatCompletionProvider(KnowledgeProvider):
                 raise RuntimeError("KM IM response did not contain a short token")
             return str(token)
 
+    def _record_audit_log(
+        self,
+        db: Optional[Session],
+        config: AIConfiguration,
+        user: Dict[str, Any],
+        conversation_id: str,
+        question: str,
+        ctx: Dict[str, Any],
+        endpoint: str,
+        http_status: int,
+        latency_ms: int,
+        token_count: int,
+        success: bool
+    ) -> None:
+        if not db or not getattr(config, "audit_enabled", False):
+            return
+        try:
+            audit = AIAuditLog(
+                user_id=user.get("id", 1),
+                conversation_id=conversation_id,
+                question=question,
+                ticket_number=ctx.get("ticket_number"),
+                application=ctx.get("application"),
+                project=ctx.get("project"),
+                endpoint=endpoint,
+                http_status=http_status,
+                response_time_ms=latency_ms,
+                token_count=token_count,
+                success=success
+            )
+            db.add(audit)
+            db.flush()
+        except Exception as err:
+            logger.warning("Failed to record relational AI audit log: %s", err)
+
+        mongo = get_mongo_db()
+        if mongo is not None:
+            try:
+                mongo.integration_events.insert_one({
+                    "event_type": "km_query", "at": datetime.datetime.utcnow(),
+                    "conversation_id": conversation_id, "user_id": user.get("id"),
+                    "ticket_number": ctx.get("ticket_number"), "endpoint": endpoint,
+                    "http_status": http_status, "latency_ms": latency_ms,
+                    "token_count": token_count, "success": success,
+                })
+            except Exception as exc:
+                logger.warning("Mongo integration-event write failed: %s", exc)
+
+    def _detect_ticket_query(self, question: str, ctx: Dict[str, Any], db: Optional[Session] = None) -> Tuple[bool, Optional[str]]:
+        """
+        Determines if the user question is related to tickets present in our app.
+        Returns (is_ticket, ticket_number_or_none).
+        """
+        q_lower = (question or "").lower()
+
+        # 1. Explicit ticket number mentioned in the question itself (INC/REQ/CHG)
+        m = re.search(r'\b(INC|REQ|CHG)\d+\b', question, re.IGNORECASE)
+        if m:
+            return True, m.group(0).upper()
+
+        # 2. Clear ticket-specific intents and phrases (referencing current or past tickets)
+        ticket_intents = [
+            "this ticket", "the ticket", "summarize", "summary",
+            "work note", "work notes", "worknote", "worknotes",
+            "close note", "close notes", "closure note", "closure notes",
+            "resolution note", "resolution notes", "how was it closed", "how was it resolved",
+            "customer comment", "customer comments", "customer communication",
+            "similar ticket", "similar tickets", "similar incident", "similar incidents",
+            "steps taken", "what was done", "open ticket", "open tickets", "my tickets",
+            "all tickets", "reassign", "resolution code"
+        ]
+        if any(kw in q_lower for kw in ticket_intents):
+            return True, ctx.get("ticket_number")
+
+        # 3. Check if words in the question match an actual ticket in our app database
+        if db:
+            words = [w for w in re.findall(r'\b[a-zA-Z0-9_-]{3,}\b', q_lower) if w not in STOP_WORDS]
+            tech_generic = {"kafka", "oauth", "docker", "kubernetes", "microservice", "microservices", "itil", "configure", "setup", "install"}
+            ticket_words = [w for w in words if w not in tech_generic]
+            if ticket_words:
+                for w in ticket_words:
+                    inc = db.query(Incident).filter(
+                        or_(
+                            Incident.short_description.ilike(f"%{w}%"),
+                            Incident.description.ilike(f"%{w}%"),
+                            Incident.resolution_notes.ilike(f"%{w}%")
+                        )
+                    ).first()
+                    if inc:
+                        return True, inc.number
+
+                    req = db.query(ServiceRequest).filter(
+                        or_(
+                            ServiceRequest.short_description.ilike(f"%{w}%"),
+                            ServiceRequest.description.ilike(f"%{w}%")
+                        )
+                    ).first()
+                    if req:
+                        return True, req.number
+
+                    chg = db.query(ChangeRequest).filter(
+                        or_(
+                            ChangeRequest.short_description.ilike(f"%{w}%"),
+                            ChangeRequest.description.ilike(f"%{w}%")
+                        )
+                    ).first()
+                    if chg:
+                        return True, chg.number
+
+        return False, None
+
     async def chat(
         self,
         db: Session,
@@ -669,14 +911,35 @@ class InternalChatCompletionProvider(KnowledgeProvider):
             clean_question = re.sub(r'\b(?:\d{4}[ -]?){3}\d{4}\b', '[CARD REDACTED]', clean_question)
             clean_question = re.sub(r'(?i)(password|secret|token)\s*[:=]\s*\S+', r'\1: [REDACTED]', clean_question)
 
-        # Enrich ticket_context from database if ticket number is specified or found in question
-        ticket_num = ctx.get("ticket_number")
-        if not ticket_num:
-            m_ticket = re.search(r'\b(INC|REQ|CHG)\d{7}\b', question, re.IGNORECASE)
-            if m_ticket:
-                ticket_num = m_ticket.group(0).upper()
-                ctx["ticket_number"] = ticket_num
+        # ── 1. Check if query is related to tickets present in our app ──
+        is_ticket_query, detected_ticket = self._detect_ticket_query(clean_question, ctx, db)
+        if detected_ticket and not ctx.get("ticket_number"):
+            ctx["ticket_number"] = detected_ticket
 
+        # If question is related to tickets in our app, resolve directly from the ticket database
+        # checking short description, description, work notes, comments, and close notes.
+        if is_ticket_query:
+            content, citations = EnterpriseKnowledgeFallback.generate_response(clean_question, ctx, db=db)
+            latency_ms = int((time.time() - start_time) * 1000)
+            token_count = len(content.split()) * 2
+            http_status = 200
+
+            self._record_audit_log(
+                db=db, config=config, user=user, conversation_id=conversation_id,
+                question=clean_question, ctx=ctx, endpoint="local_ticket_resolver",
+                http_status=http_status, latency_ms=latency_ms, token_count=token_count, success=True
+            )
+
+            return {
+                "role": "assistant",
+                "content": content,
+                "citations": citations,
+                "token_count": token_count,
+                "latency_ms": latency_ms
+            }
+
+        # ── 2. Otherwise: Generic / Knowledge queries routed to Knowledge Manager ChatCompletion API ──
+        ticket_num = ctx.get("ticket_number")
         work_notes_summary = ""
         if db and ticket_num:
             t_prefix = ticket_num[:3].upper()
@@ -866,37 +1129,11 @@ class InternalChatCompletionProvider(KnowledgeProvider):
             http_status = 200
 
         # Record AI Interaction Audit Log if enabled
-        if config.audit_enabled:
-            audit = AIAuditLog(
-                user_id=user.get("id", 1),
-                conversation_id=conversation_id,
-                question=clean_question,
-                ticket_number=ctx.get("ticket_number"),
-                application=ctx.get("application"),
-                project=ctx.get("project"),
-                endpoint=full_url,
-                http_status=http_status,
-                response_time_ms=latency_ms,
-                token_count=token_count,
-                success=success
-            )
-            db.add(audit)
-            db.flush()
-            # Mongo keeps flexible integration telemetry separate from the
-            # relational ticket transaction.  Do not include short tokens,
-            # headers, or raw KM responses in this document.
-            mongo = get_mongo_db()
-            if mongo is not None:
-                try:
-                    mongo.integration_events.insert_one({
-                        "event_type": "km_query", "at": datetime.datetime.utcnow(),
-                        "conversation_id": conversation_id, "user_id": user.get("id"),
-                        "ticket_number": ctx.get("ticket_number"), "endpoint": full_url,
-                        "http_status": http_status, "latency_ms": latency_ms,
-                        "token_count": token_count, "success": success,
-                    })
-                except Exception as exc:
-                    logger.warning("Mongo integration-event write failed: %s", exc)
+        self._record_audit_log(
+            db=db, config=config, user=user, conversation_id=conversation_id,
+            question=clean_question, ctx=ctx, endpoint=full_url,
+            http_status=http_status, latency_ms=latency_ms, token_count=token_count, success=success
+        )
 
         return {
             "role": "assistant",
