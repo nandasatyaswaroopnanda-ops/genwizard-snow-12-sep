@@ -177,9 +177,11 @@ def test_swagger_and_automation_openapi_exposure(client):
     assert "Swagger UI" in docs_res.text
     assert "/vendor/swagger/swagger-ui-bundle.js" in docs_res.text
     assert "/vendor/swagger/swagger-ui.css" in docs_res.text
+    assert "<script>" not in docs_res.text
     csp = docs_res.headers.get("content-security-policy", "")
     assert "default-src 'self'" in csp
     assert "script-src 'self'" in csp
+    assert "font-src 'self' data:;" in csp
     assert "cdn.jsdelivr.net" not in csp
 
     itsm_docs_res = client.get("/itsm/docs")

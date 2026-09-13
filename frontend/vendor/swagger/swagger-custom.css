@@ -1,0 +1,15 @@
+/* Clean Enterprise Swagger UI Styling */
+.swagger-ui .topbar { display: none !important; }
+.swagger-ui .info .link, 
+.swagger-ui .info a[href*='openapi'], 
+.swagger-ui .info a[href*='.json'], 
+.swagger-ui .info hgroup.main a, 
+.swagger-ui .info .url, 
+.swagger-ui .info .info__code, 
+.swagger-ui .info small a, 
+.swagger-ui .info small { 
+  display: none !important; 
+}
+.swagger-ui .info {
+  margin: 20px 0 10px 0 !important;
+}

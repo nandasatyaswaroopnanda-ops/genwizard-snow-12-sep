@@ -1,0 +1,1 @@
+a[href*='openapi.json'], button:has-text('Download') { display: none !important; }
