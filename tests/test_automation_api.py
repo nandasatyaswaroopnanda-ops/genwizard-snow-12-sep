@@ -187,8 +187,8 @@ def test_swagger_and_automation_openapi_exposure(client):
     openapi_res = client.get("/openapi.json")
     assert openapi_res.status_code == 200
     schema = openapi_res.json()
-    assert "GenWizard Support Portal" in schema["info"]["title"]
-    assert "Ticket Automation" in schema["info"]["title"]
+    assert schema["info"]["title"] == "GenWizard Support Portal"
+    assert schema["info"].get("description", "") == ""
 
     # Security Schemes
     sec_schemes = schema.get("components", {}).get("securitySchemes", {})

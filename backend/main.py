@@ -27,8 +27,7 @@ from backend.routes import (
 )
 
 app = FastAPI(
-    title="GenWizard Support Portal — Accenture",
-    description="Configuration-driven ITSM platform with Project -> Assignment Group -> SLA Policy Engine and AI Support Copilot",
+    title="GenWizard Support Portal",
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
@@ -341,28 +340,10 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
-        title="GenWizard Support Portal — ITSM & Ticket Automation APIs",
+        title="GenWizard Support Portal",
         version="1.0.0",
-        description=(
-            "### 🚀 GenWizard Enterprise ITSM Automation & Integration APIs\n\n"
-            "Comprehensive REST APIs designed for enterprise automation bots, CI/CD pipelines, "
-            "monitoring alerts, and ITSM workflows with zero vulnerabilities.\n\n"
-            "#### 🔑 Authentication Options:\n"
-            "- **Bearer Token**: `Authorization: Bearer <JWT_or_ATR_token>` (Identity Service, Keycloak SSO, ATR Gateway)\n"
-            "- **Header Authentication**: `X-User-ID: <user_id>` (for internal automation bots & microservices)\n\n"
-            "#### ⚡ Key Ticket Automation Capabilities:\n"
-            "- **Incident Automation**: Automated creation (`POST /api/incidents`), automated remediation & resolution with resolution notes (`PATCH /api/incidents/{num}/status`), engineering work notes (`POST /api/incidents/{num}/work-notes`), and scheduled batch auto-closure (`POST /api/incidents/auto-close`).\n"
-            "- **Service Request Automation**: Access requests (`POST /api/service-requests`), automated provisioning & fulfillment (`PATCH /api/service-requests/{num}/status`), manager approval (`POST /api/service-requests/{num}/approve`), and batch auto-closure (`POST /api/service-requests/auto-close`).\n"
-            "- **Change Request Automation**: CI/CD pipeline progression (`PATCH /api/changes/{num}/status`: Scheduled → Implementation → Completed → Closed), CAB approval (`POST /api/changes/{num}/approve`), and pipeline execution logs (`POST /api/changes/{num}/work-notes`).\n"
-        ),
+        description="",
         routes=app.routes,
-        tags=[
-            {"name": "incidents", "description": "Incident Management & Automation (Create, Auto-Resolve, Batch Auto-Close, Work Notes)"},
-            {"name": "service-requests", "description": "Service Request Management & Automation (Fulfill, Approve, Batch Auto-Close)"},
-            {"name": "changes", "description": "Change Request Management & CI/CD Pipeline Progression"},
-            {"name": "ai_chat", "description": "GenWizard AI Copilot & Knowledge Manager Integration"},
-            {"name": "auth", "description": "Authentication, SSO, and User Profiles"},
-        ]
     )
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
@@ -371,13 +352,13 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": "Enter your JWT or ATR Gateway Bearer Token"
+            "description": "Bearer token authentication"
         },
         "ApiKeyAuth": {
             "type": "apiKey",
             "in": "header",
             "name": "X-User-ID",
-            "description": "Internal automation user ID (e.g. 1 for Admin, 2 for Automation Bot)"
+            "description": "Internal automation user ID"
         }
     }
     openapi_schema["security"] = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
