@@ -66,7 +66,7 @@ async def itsm_subpath_middleware(request: Request, call_next):
         "CONTENT_SECURITY_POLICY",
         (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:; "
+            "script-src 'self' 'unsafe-inline' blob: data:; "
             "style-src 'self' 'unsafe-inline'; "
             "font-src 'self' data: blob:; "
             "img-src 'self' data: blob:; "
