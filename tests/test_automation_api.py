@@ -167,3 +167,47 @@ def test_change_request_automated_progression(client):
     }, headers={"X-User-ID": "1"})
     assert close_res.status_code == 200
     assert close_res.json()["change_status"] == "Closed"
+
+
+def test_swagger_and_automation_openapi_exposure(client):
+    """Verify Swagger UI and OpenAPI documentation are properly exposed for ticket automation."""
+    # 1. Root and Subpath Swagger UI endpoints
+    docs_res = client.get("/docs")
+    assert docs_res.status_code == 200
+    assert "Swagger UI" in docs_res.text
+    csp = docs_res.headers.get("content-security-policy", "")
+    assert "https://cdn.jsdelivr.net" in csp
+    assert "https://fastapi.tiangolo.com" in csp
+
+    itsm_docs_res = client.get("/itsm/docs")
+    assert itsm_docs_res.status_code == 200
+    assert "Swagger UI" in itsm_docs_res.text
+
+    # 2. OpenAPI Schema endpoints
+    openapi_res = client.get("/openapi.json")
+    assert openapi_res.status_code == 200
+    schema = openapi_res.json()
+    assert "GenWizard Support Portal" in schema["info"]["title"]
+    assert "Ticket Automation" in schema["info"]["title"]
+
+    # Security Schemes
+    sec_schemes = schema.get("components", {}).get("securitySchemes", {})
+    assert "BearerAuth" in sec_schemes
+    assert "ApiKeyAuth" in sec_schemes
+
+    # Ticket Automation Paths
+    paths = schema.get("paths", {})
+    assert "/api/incidents" in paths
+    assert "/api/incidents/{ticket_id_or_number}/status" in paths
+    assert "/api/incidents/{ticket_id_or_number}/work-notes" in paths
+    assert "/api/incidents/auto-close" in paths
+    assert "/api/service-requests" in paths
+    assert "/api/service-requests/{ticket_id_or_number}/status" in paths
+    assert "/api/service-requests/auto-close" in paths
+    assert "/api/changes" in paths
+    assert "/api/changes/{ticket_id_or_number}/status" in paths
+
+    # 3. Subpath OpenAPI endpoint
+    itsm_openapi_res = client.get("/itsm/openapi.json")
+    assert itsm_openapi_res.status_code == 200
+

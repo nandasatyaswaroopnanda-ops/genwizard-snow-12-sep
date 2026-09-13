@@ -7,6 +7,8 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 
 from backend.database import engine, SessionLocal
@@ -27,7 +29,10 @@ from backend.routes import (
 app = FastAPI(
     title="GenWizard Support Portal — Accenture",
     description="Configuration-driven ITSM platform with Project -> Assignment Group -> SLA Policy Engine and AI Support Copilot",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url="/openapi.json"
 )
 
 # CORS Configuration - Production hardened with configurable origins
@@ -66,10 +71,10 @@ async def itsm_subpath_middleware(request: Request, call_next):
         "CONTENT_SECURITY_POLICY",
         (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' blob: data:; "
-            "style-src 'self' 'unsafe-inline'; "
-            "font-src 'self' data: blob:; "
-            "img-src 'self' data: blob:; "
+            "script-src 'self' 'unsafe-inline' blob: data: https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "font-src 'self' data: blob: https://cdn.jsdelivr.net; "
+            "img-src 'self' data: blob: https://cdn.jsdelivr.net https://fastapi.tiangolo.com; "
             "connect-src 'self' data: blob:; "
             "frame-src 'self'; "
             "frame-ancestors 'self';"
@@ -328,6 +333,108 @@ def serve_sso_redirect():
     if os.path.exists(sso_path):
         return FileResponse(sso_path)
     return RedirectResponse(url="/")
+
+# ─────────────────────────────────────────────────────────────
+# Swagger & OpenAPI Documentation for Ticket Automation
+# ─────────────────────────────────────────────────────────────
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="GenWizard Support Portal — ITSM & Ticket Automation APIs",
+        version="1.0.0",
+        description=(
+            "### 🚀 GenWizard Enterprise ITSM Automation & Integration APIs\n\n"
+            "Comprehensive REST APIs designed for enterprise automation bots, CI/CD pipelines, "
+            "monitoring alerts, and ITSM workflows with zero vulnerabilities.\n\n"
+            "#### 🔑 Authentication Options:\n"
+            "- **Bearer Token**: `Authorization: Bearer <JWT_or_ATR_token>` (Identity Service, Keycloak SSO, ATR Gateway)\n"
+            "- **Header Authentication**: `X-User-ID: <user_id>` (for internal automation bots & microservices)\n\n"
+            "#### ⚡ Key Ticket Automation Capabilities:\n"
+            "- **Incident Automation**: Automated creation (`POST /api/incidents`), automated remediation & resolution with resolution notes (`PATCH /api/incidents/{num}/status`), engineering work notes (`POST /api/incidents/{num}/work-notes`), and scheduled batch auto-closure (`POST /api/incidents/auto-close`).\n"
+            "- **Service Request Automation**: Access requests (`POST /api/service-requests`), automated provisioning & fulfillment (`PATCH /api/service-requests/{num}/status`), manager approval (`POST /api/service-requests/{num}/approve`), and batch auto-closure (`POST /api/service-requests/auto-close`).\n"
+            "- **Change Request Automation**: CI/CD pipeline progression (`PATCH /api/changes/{num}/status`: Scheduled → Implementation → Completed → Closed), CAB approval (`POST /api/changes/{num}/approve`), and pipeline execution logs (`POST /api/changes/{num}/work-notes`).\n"
+        ),
+        routes=app.routes,
+        tags=[
+            {"name": "incidents", "description": "Incident Management & Automation (Create, Auto-Resolve, Batch Auto-Close, Work Notes)"},
+            {"name": "service-requests", "description": "Service Request Management & Automation (Fulfill, Approve, Batch Auto-Close)"},
+            {"name": "changes", "description": "Change Request Management & CI/CD Pipeline Progression"},
+            {"name": "ai_chat", "description": "GenWizard AI Copilot & Knowledge Manager Integration"},
+            {"name": "auth", "description": "Authentication, SSO, and User Profiles"},
+        ]
+    )
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Enter your JWT or ATR Gateway Bearer Token"
+        },
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-User-ID",
+            "description": "Internal automation user ID (e.g. 1 for Admin, 2 for Automation Bot)"
+        }
+    }
+    openapi_schema["security"] = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+@app.get("/docs", include_in_schema=False)
+@app.get("/itsm/docs", include_in_schema=False)
+async def custom_swagger_ui_html(req: Request):
+    root_path = req.scope.get("root_path", "").rstrip("/")
+    path = req.url.path
+    if req.headers.get("x-forwarded-prefix"):
+        prefix = req.headers.get("x-forwarded-prefix").rstrip("/")
+    elif path.startswith("/itsm"):
+        prefix = "/itsm"
+    elif root_path:
+        prefix = root_path
+    else:
+        prefix = ""
+
+    openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
+    return get_swagger_ui_html(
+        openapi_url=openapi_url,
+        title="GenWizard Support Portal — Swagger UI & Automation",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+        swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+        swagger_ui_parameters={
+            "persistAuthorization": True,
+            "displayRequestDuration": True,
+            "filter": True,
+            "tryItOutEnabled": True,
+            "docExpansion": "list"
+        }
+    )
+
+@app.get("/redoc", include_in_schema=False)
+@app.get("/itsm/redoc", include_in_schema=False)
+async def custom_redoc_html(req: Request):
+    root_path = req.scope.get("root_path", "").rstrip("/")
+    path = req.url.path
+    prefix = "/itsm" if path.startswith("/itsm") else root_path
+    openapi_url = f"{prefix}/openapi.json" if prefix else "/openapi.json"
+    return get_redoc_html(
+        openapi_url=openapi_url,
+        title="GenWizard Support Portal — ReDoc",
+        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
+        redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
+    )
+
+@app.get("/itsm/openapi.json", include_in_schema=False)
+def get_itsm_openapi():
+    return JSONResponse(app.openapi())
+
 
 if __name__ == "__main__":
     import uvicorn
