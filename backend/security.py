@@ -193,7 +193,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
     1: {
         "employee_id": "EMP001",
         "username": "admin",
-        "full_name": "Admin User",
+        "full_name": "admin",
         "first_name": "Admin",
         "last_name": "User",
         "email": "admin@company.com",
@@ -436,7 +436,7 @@ def get_current_user(
 
                     # Use external name as-is if provided; otherwise generate clean title
                     display_full_name = str(ext_name).strip() if ext_name else (
-                        "Administrator" if u_str == "admin" else str(ext_uname).replace(".", " ").title()
+                        "admin" if u_str == "admin" else str(ext_uname).replace(".", " ").title()
                     )
 
                     user = User(
@@ -556,18 +556,50 @@ def get_current_user(
             return user
 
     # 3. Check for external IM proxy headers and cookies (X-User-Name, X-Remote-User, X-Forwarded-User, Remote-User, etc.)
-    ext_username = (
-        (request.headers.get("x-user-name") or
-         request.headers.get("x-remote-user") or
-         request.headers.get("x-forwarded-user") or
-         request.headers.get("remote-user") or
-         request.headers.get("x-authenticated-user") or
-         request.headers.get("x-webauth-user") or
-         request.cookies.get("username") or
-         request.cookies.get("user") or
-         request.cookies.get("im_user") or
-         x_user_name or x_remote_user or "") if request else (x_user_name or x_remote_user or "")
-    ).strip()
+    ext_username = ""
+    ext_fullname = ""
+    if request:
+        ext_username = (
+            request.headers.get("x-user-name") or
+            request.headers.get("x-remote-user") or
+            request.headers.get("x-forwarded-user") or
+            request.headers.get("remote-user") or
+            request.headers.get("x-authenticated-user") or
+            request.headers.get("x-webauth-user") or
+            request.headers.get("x-auth-request-user") or
+            request.headers.get("x-auth-request-preferred-username") or
+            request.headers.get("x-user") or
+            request.headers.get("x-username") or
+            request.headers.get("x-im-user") or
+            request.cookies.get("username") or
+            request.cookies.get("user") or
+            request.cookies.get("im_user") or
+            request.cookies.get("sso_username") or
+            request.cookies.get("sso_user") or
+            request.cookies.get("remote_user") or
+            x_user_name or x_remote_user or ""
+        ).strip()
+        ext_fullname = (
+            request.headers.get("x-user-fullname") or
+            request.headers.get("x-user-displayname") or
+            request.headers.get("x-display-name") or
+            request.headers.get("x-auth-request-name") or
+            request.headers.get("x-forwarded-name") or ""
+        ).strip()
+    else:
+        ext_username = (x_user_name or x_remote_user or "").strip()
+
+    if ext_username.startswith("{") and ext_username.endswith("}"):
+        try:
+            import json
+            u_obj = json.loads(ext_username)
+            if isinstance(u_obj, dict):
+                ext_username = u_obj.get("username") or u_obj.get("user") or u_obj.get("preferred_username") or ext_username
+                if not ext_fullname:
+                    ext_fullname = u_obj.get("full_name") or u_obj.get("name") or u_obj.get("displayName") or ""
+        except Exception:
+            pass
+
     ext_email = (
         (request.headers.get("x-user-email") or
          request.headers.get("x-forwarded-email") or
@@ -584,9 +616,7 @@ def get_current_user(
             user = db.query(User).filter(User.email.ilike(ext_email)).first()
         if not user and ext_username:
             # Auto-provision user from external IM
-            display_name = ext_username.replace(".", " ").title()
-            if request and request.headers.get("x-user-fullname"):
-                display_name = request.headers.get("x-user-fullname").strip()
+            display_name = ext_fullname or ("admin" if ext_username.lower() == "admin" else ext_username.replace(".", " ").title())
             user = User(
                 username=ext_username,
                 full_name=display_name,

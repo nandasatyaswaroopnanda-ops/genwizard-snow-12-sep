@@ -1,3 +1,50 @@
+
+// ================================================================
+// Global UI Action Helpers for 100% CSP Compliance
+// These functions are called from data-click / data-action attrs
+// and from the delegated event dispatcher in init.js
+// ================================================================
+function closeModalContainer() {
+  var mc = document.getElementById('modalContainer');
+  if (mc) mc.innerHTML = '';
+}
+function closeSearchDropdown() {
+  var sd = document.getElementById('searchDropdown');
+  if (sd) sd.classList.add('hidden');
+}
+function selectGlobalSearchResult(val) {
+  closeSearchDropdown();
+  setTimeout(function () {
+    var fi = document.getElementById('filterTicketSearch') || document.getElementById('filterUnifiedSearch');
+    if (fi) { fi.value = val; fi.dispatchEvent(new Event('input', { bubbles: true })); }
+  }, 200);
+}
+function closeNodeDetailBox() {
+  var box = document.getElementById('nodeDetailBox');
+  if (box) box.classList.add('hidden');
+}
+
+function renderVisualConfigGraphMain() {
+  var el = document.getElementById('mainApp');
+  if (el && typeof renderVisualConfigGraph === 'function') renderVisualConfigGraph(el);
+}
+function renderConfigValidationViewMain() {
+  var el = document.getElementById('mainApp');
+  if (el && typeof renderConfigValidationView === 'function') renderConfigValidationView(el);
+}
+function renderAiAdminViewMain() {
+  var el = document.getElementById('mainApp');
+  if (el && typeof renderAiAdminView === 'function') renderAiAdminView(el);
+}
+
+function closeAdminModal() {
+  var mc = document.getElementById('modalContainer');
+  if (mc) mc.innerHTML = '';
+}
+function triggerCsvFileInput() {
+  var fi = document.getElementById('csvFileInput');
+  if (fi) fi.click();
+}
 // Safe library stubs in case external CDNs are slow or blocked
 var _originalCreateIcons = (typeof window !== 'undefined' && window.lucide && typeof window.lucide.createIcons === 'function')
   ? window.lucide.createIcons
@@ -107,7 +154,7 @@ var state = {
   currentUser: _storedUser || {
     id: 1,
     username: 'admin',
-    full_name: 'Admin User',
+    full_name: 'admin',
     role: 'itsm_admin',
     is_global_admin: true,
     is_end_user: false,
@@ -657,20 +704,83 @@ async function loadCurrentUser() {
     localStorage.setItem('auth_token', authToken);
   }
 
-  // 1. Resolve stored SSO or external Identity Management user
+  // 1. Resolve stored SSO or external Identity Management user from all sources
   let ssoUser = null;
-  const userKeys = ['sso_user', 'current_user', 'user', 'currentUser', 'userInfo', 'im_user'];
-  for (const k of userKeys) {
+
+  // Check URL query parameters
+  if (typeof window !== 'undefined' && window.location && window.location.search) {
+    const sp = new URLSearchParams(window.location.search);
+    const qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('im_user');
+    if (qUser) {
+      ssoUser = { username: qUser, full_name: qUser === 'admin' ? 'admin' : qUser.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+      localStorage.setItem('sso_username', qUser);
+    }
+  }
+
+  // Check cookies for external IM identity
+  if (!ssoUser && typeof document !== 'undefined' && document.cookie) {
+    const cookieMatch = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|username|user)=([^;]+)/i);
+    if (cookieMatch && cookieMatch[1]) {
+      const cUname = decodeURIComponent(cookieMatch[1].trim());
+      if (cUname && cUname.length > 0 && cUname.length < 60) {
+        try {
+          const parsed = JSON.parse(cUname);
+          if (parsed && (parsed.username || parsed.name || parsed.full_name)) ssoUser = parsed;
+        } catch (_) {
+          ssoUser = { username: cUname, full_name: cUname === 'admin' ? 'admin' : cUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+        }
+      }
+    }
+  }
+
+  // Check token claims if JWT
+  if (!ssoUser && authToken && authToken.includes('.')) {
     try {
-      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
-      if (raw) {
-        const u = JSON.parse(raw);
-        if (u && (u.username || u.name || u.full_name)) {
-          ssoUser = u;
-          break;
+      const parts = authToken.split('.');
+      if (parts.length >= 2) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const uname = payload.preferred_username || payload.username || payload.sub || payload.login;
+        const fname = payload.name || payload.full_name || payload.displayName;
+        const mail = payload.email || payload.mail;
+        if (uname || fname) {
+          ssoUser = {
+            id: payload.user_id || payload.userId || (payload.sub && /^\d+$/.test(payload.sub) ? parseInt(payload.sub) : undefined),
+            username: uname || (fname ? fname.toLowerCase().replace(/\s+/g, '.') : 'user'),
+            full_name: uname === 'admin' ? 'admin' : (fname || (uname ? uname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'User')),
+            email: mail,
+            role: payload.role || 'itsm_user'
+          };
         }
       }
     } catch (_) {}
+  }
+
+  // Check plain storage keys
+  if (!ssoUser) {
+    for (const pk of ['sso_username', 'username']) {
+      const pVal = localStorage.getItem(pk) || sessionStorage.getItem(pk);
+      if (pVal && typeof pVal === 'string' && pVal.length > 0 && pVal.length < 60) {
+        ssoUser = { username: pVal, full_name: pVal === 'admin' ? 'admin' : pVal.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+        break;
+      }
+    }
+  }
+
+  // Check JSON storage keys
+  if (!ssoUser) {
+    const userKeys = ['sso_user', 'current_user', 'user', 'currentUser', 'userInfo', 'im_user'];
+    for (const k of userKeys) {
+      try {
+        const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+        if (raw) {
+          const u = JSON.parse(raw);
+          if (u && (u.username || u.name || u.full_name)) {
+            ssoUser = u;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   if (ssoUser) {
@@ -678,7 +788,7 @@ async function loadCurrentUser() {
     updateUserUI();
   }
 
-  // 2. Build headers without defaulting to X-User-ID: 1 when SSO or token is active
+  // 2. Build headers without defaulting to X-User-ID: 1
   const headers = {};
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
@@ -692,13 +802,14 @@ async function loadCurrentUser() {
     const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id');
     if (savedUserId && savedUserId !== '1') {
       headers['X-User-ID'] = savedUserId;
-    } else if (!authToken) {
-      headers['X-User-ID'] = savedUserId || '1';
     }
   }
 
   try {
-    const res = await fetch(`${API_BASE}/auth/current`, { headers });
+    const res = await fetch(`${API_BASE}/auth/current`, {
+      headers,
+      credentials: 'include'
+    });
     if (res.ok) {
       const backendUser = await res.json();
       if (backendUser && (backendUser.username || backendUser.full_name)) {
@@ -874,20 +985,49 @@ function updateNavVisibilityForRole() {
   }
 }
 
+function getUserDisplayName(user) {
+  if (!user) return 'User';
+  const uname = (user.username || '').toLowerCase().trim();
+  const fname = (user.full_name || user.name || '').trim();
+
+  // If actual "admin" is logged in, show "admin" as explicitly required
+  if (uname === 'admin' || fname.toLowerCase() === 'admin' || fname === 'Admin User' || fname === 'Administrator') {
+    return 'admin';
+  }
+
+  // If valid full_name is present and distinct from generic placeholders, show it
+  if (fname && fname !== 'SSO Enterprise User' && fname !== 'User') {
+    return fname;
+  }
+
+  // Fallback to username or email prefix
+  if (user.username) return user.username;
+  if (user.email) return user.email.split('@')[0];
+  return 'User';
+}
+
 function updateUserUI() {
   if (!state.currentUser) return;
   const nameEl = document.getElementById('userName');
   const roleEl = document.getElementById('userRoleBadge');
   const avatarEl = document.getElementById('userAvatar');
 
-  if (nameEl) nameEl.textContent = state.currentUser.full_name || state.currentUser.username || 'User';
+  const displayName = getUserDisplayName(state.currentUser);
+  if (nameEl) nameEl.textContent = displayName;
   if (roleEl) {
     roleEl.textContent = '';
     roleEl.style.display = 'none';
   }
   if (avatarEl) {
-    const name = state.currentUser.full_name || state.currentUser.username || 'User';
-    const initials = name.split(' ').filter(Boolean).map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'AU';
+    let initials = 'AD';
+    if (displayName === 'admin') {
+      initials = 'AD';
+    } else {
+      const parts = displayName.split(' ').filter(Boolean);
+      initials = parts.length >= 2
+        ? (parts[0][0] + parts[1][0]).toUpperCase()
+        : displayName.slice(0, 2).toUpperCase() || 'U';
+    }
     avatarEl.textContent = initials;
   }
 
@@ -908,12 +1048,12 @@ function renderUserSwitcherDropdown() {
 
   container.innerHTML = state.allUsers.map(u => {
     const isSelected = state.currentUser && state.currentUser.id === u.id;
-    const uName = u.full_name || u.username || 'User';
-    const uInitials = uName.split(' ').filter(Boolean).map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U';
+    const uName = getUserDisplayName(u);
+    const uInitials = (uName === 'admin') ? 'AD' : (uName.split(' ').filter(Boolean).map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U');
     const userProj = (u.admin_projects && u.admin_projects[0]) || (u.support_projects && u.support_projects[0]) || '';
 
     return `
-      <div onclick="switchUser(${u.id})" class="flex items-center justify-between p-2.5 hover:bg-[var(--bg-tertiary)] cursor-pointer rounded-lg transition-colors ${isSelected ? 'bg-purple-50/50' : ''}">
+      <div data-click="switchUser(${u.id})" class="flex items-center justify-between p-2.5 hover:bg-[var(--bg-tertiary)] cursor-pointer rounded-lg transition-colors ${isSelected ? 'bg-purple-50/50' : ''}">
         <div class="flex items-center space-x-2.5">
           <div class="w-8 h-8 rounded-full bg-slate-700 text-white text-xs font-bold flex items-center justify-center">
             ${uInitials}
@@ -1155,7 +1295,7 @@ function handleRoute() {
           <div class="font-bold text-base text-[var(--text-primary)]">GenWizard ITSM Portal</div>
           <p class="text-xs text-slate-400">Loading initial console view...</p>
           <div class="pt-2">
-            <button onclick="window.location.hash='#/tickets'; if (typeof renderUnifiedTicketsView==='function') renderUnifiedTicketsView(document.getElementById('mainApp'))" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow">
+            <button data-click="navigateToTicketsView()" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-semibold shadow">
               Open Unified Tickets
             </button>
           </div>
@@ -1233,7 +1373,7 @@ function setupGlobalSearch() {
               <span>${incidents.length} found</span>
             </div>
             ${incidents.slice(0, 4).map(i => `
-              <a href="#/incidents/${i.number}" onclick="document.getElementById('searchDropdown').classList.add('hidden')" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
+              <a href="#/incidents/${i.number}" data-click="closeSearchDropdown()" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
                 <div class="flex items-center space-x-2 truncate">
                   <span class="font-bold text-purple-600 shrink-0">${i.number}</span>
                   <span class="truncate max-w-xs text-[var(--text-primary)] font-medium">${i.short_description}</span>
@@ -1255,7 +1395,7 @@ function setupGlobalSearch() {
               <span>${requests.length} found</span>
             </div>
             ${requests.slice(0, 4).map(r => `
-              <a href="#/service-requests/${r.number}" onclick="document.getElementById('searchDropdown').classList.add('hidden')" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
+              <a href="#/service-requests/${r.number}" data-click="closeSearchDropdown()" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
                 <div class="flex items-center space-x-2 truncate">
                   <span class="font-bold text-indigo-600 shrink-0">${r.number}</span>
                   <span class="truncate max-w-xs text-[var(--text-primary)] font-medium">${r.short_description}</span>
@@ -1277,7 +1417,7 @@ function setupGlobalSearch() {
               <span>${changes.length} found</span>
             </div>
             ${changes.slice(0, 4).map(c => `
-              <a href="#/changes/${c.number}" onclick="document.getElementById('searchDropdown').classList.add('hidden')" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
+              <a href="#/changes/${c.number}" data-click="closeSearchDropdown()" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
                 <div class="flex items-center space-x-2 truncate">
                   <span class="font-bold text-amber-600 shrink-0">${c.number}</span>
                   <span class="truncate max-w-xs text-[var(--text-primary)] font-medium">${c.short_description}</span>
@@ -1299,7 +1439,7 @@ function setupGlobalSearch() {
               <span>${articles.length} articles</span>
             </div>
             ${articles.slice(0, 3).map(a => `
-              <a href="#/knowledge" onclick="document.getElementById('searchDropdown').classList.add('hidden')" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
+              <a href="#/knowledge" data-click="closeSearchDropdown()" class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors">
                 <div class="flex items-center space-x-2 truncate">
                   <span class="font-bold text-indigo-500 shrink-0">${a.article_number}</span>
                   <span class="truncate max-w-xs text-[var(--text-primary)]">${a.title}</span>
@@ -1313,7 +1453,7 @@ function setupGlobalSearch() {
         // Footer: View all results in Unified Tickets
         html += `
           <div class="pt-2 border-t border-[var(--border-color)] px-2">
-            <a href="#/tickets" onclick="document.getElementById('searchDropdown').classList.add('hidden'); setTimeout(() => { const fi = document.getElementById('filterTicketSearch') || document.getElementById('filterUnifiedSearch'); if (fi) { fi.value = '${val.replace(/'/g, "\\'")}'; fi.dispatchEvent(new Event('input', { bubbles: true })); } }, 200)" class="block text-center py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-bold text-xs transition-colors">
+            <a href="#/tickets" data-click="selectGlobalSearchResult('${val.replace(/'/g, "\\'")}')" class="block text-center py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-bold text-xs transition-colors">
               🔍 Open All Tickets Console (${totalFound} total results)
             </a>
           </div>
@@ -1386,7 +1526,7 @@ async function renderDashboardView(container, options = {}) {
               <h1 class="text-2xl font-black tracking-tight">Employee Self-Service Center</h1>
               <p class="text-sm text-slate-500">Welcome back, ${state.currentUser.full_name}. Track your open requests and service tickets.</p>
             </div>
-            <button onclick="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
+            <button data-click="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>Report an Issue</span>
             </button>
@@ -1420,17 +1560,17 @@ async function renderDashboardView(container, options = {}) {
           <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] p-6 shadow-sm">
             <h2 class="text-base font-bold mb-4">Request Something from IT</h2>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div onclick="openCatalogModal('Database Read-Only Access')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
+              <div data-click="openCatalogModal('Database Read-Only Access')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
                 <i data-lucide="database" class="w-6 h-6 text-purple-600 mb-2"></i>
                 <div class="font-bold text-sm">Database Access Request</div>
                 <div class="text-xs text-slate-400 mt-1">Read-only permissions for PostgreSQL or MySQL</div>
               </div>
-              <div onclick="openCatalogModal('Software Installation')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
+              <div data-click="openCatalogModal('Software Installation')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
                 <i data-lucide="hard-drive" class="w-6 h-6 text-indigo-600 mb-2"></i>
                 <div class="font-bold text-sm">Software Installation</div>
                 <div class="text-xs text-slate-400 mt-1">Request developer tools, IDEs, and packages</div>
               </div>
-              <div onclick="openCatalogModal('Cloud Environment Request')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
+              <div data-click="openCatalogModal('Cloud Environment Request')" class="p-4 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:shadow-md cursor-pointer transition-all bg-[var(--bg-tertiary)]">
                 <i data-lucide="cloud" class="w-6 h-6 text-emerald-600 mb-2"></i>
                 <div class="font-bold text-sm">Cloud Environment</div>
                 <div class="text-xs text-slate-400 mt-1">Provision EKS namespace or AWS sandbox</div>
@@ -1452,7 +1592,7 @@ async function renderDashboardView(container, options = {}) {
               <div class="flex items-center space-x-1.5 bg-[var(--card-bg)] border border-[var(--border-color)] px-2.5 py-1.5 rounded-xl shadow-xs">
                 <i data-lucide="layers" class="w-3.5 h-3.5 text-purple-600"></i>
                 <span class="text-[10px] font-bold text-slate-400 uppercase">Project:</span>
-                <select id="dashboardProjectFilter" onchange="window.switchDashboardProject(this.value)" class="bg-transparent text-xs font-bold text-[var(--text-primary)] focus:outline-none cursor-pointer">
+                <select id="dashboardProjectFilter" data-change="window.switchDashboardProject(this.value)" class="bg-transparent text-xs font-bold text-[var(--text-primary)] focus:outline-none cursor-pointer">
                   <option value="">All Projects Scope</option>
                   ${availableProjects.map(p => `<option value="${p}" ${p === currentDashboardProject ? 'selected' : ''}>${p}</option>`).join('')}
                 </select>
@@ -1462,7 +1602,7 @@ async function renderDashboardView(container, options = {}) {
                 <i data-lucide="play" class="w-3.5 h-3.5 text-emerald-500"></i>
                 <span>Test Routing Simulator</span>
               </a>` : ''}
-              <button onclick="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow">
+              <button data-click="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow">
                 + New Incident
               </button>
             </div>
@@ -1852,12 +1992,12 @@ async function renderUnifiedTicketsView(container, options = {}) {
           </div>
           <div class="flex items-center space-x-2.5">
             ${!isEndUser ? `
-              <button onclick="openExportModal('incidents')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
+              <button data-click="openExportModal('incidents')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
                 <i data-lucide="download" class="w-4 h-4 text-purple-500"></i>
                 <span>Export Tickets</span>
               </button>
             ` : ''}
-            <button onclick="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
+            <button data-click="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>Create Ticket</span>
             </button>
@@ -2051,7 +2191,7 @@ async function renderUnifiedTicketsView(container, options = {}) {
               </thead>
               <tbody id="unifiedTicketsTableBody" class="divide-y divide-[var(--border-color)] font-medium">
                 ${allTickets.map(t => `
-                  <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer group" onclick="window.location.hash='${t.detail_route}'">
+                  <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer group" data-click="window.location.hash='${t.detail_route}'">
                     <td class="p-3.5 font-bold text-purple-600 group-hover:underline flex items-center space-x-1.5">
                       <i data-lucide="${t.type_icon}" class="w-3.5 h-3.5"></i>
                       <span>${t.number}</span>
@@ -2467,12 +2607,12 @@ async function renderTicketsView(container, options = {}) {
           </div>
           <div class="flex items-center space-x-2.5">
             ${['support_member', 'group_manager', 'administrator', 'itsm_admin'].includes(state.currentUser?.role) ? `
-              <button onclick="openExportModal('incidents')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
+              <button data-click="openExportModal('incidents')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
                 <i data-lucide="download" class="w-4 h-4 text-purple-500"></i>
                 <span>Export Incidents</span>
               </button>
             ` : ''}
-            <button onclick="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
+            <button data-click="openCreateModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-2">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>${isMyTickets ? 'Create Ticket' : 'Create Incident'}</span>
             </button>
@@ -2902,7 +3042,7 @@ function renderIncidentRows(items, columns, cellRenderer) {
       slaBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold text-slate-400">✓ Achieved</span>`;
     }
     return `
-      <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" onclick="window.location.hash='#/incidents/${i.number}'">
+      <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" data-click="window.location.hash='#/incidents/${i.number}'">
         ${columns.map(c => cellRenderer(i, c.column_key, slaBadge)).join('')}
       </tr>
     `;
@@ -2956,30 +3096,30 @@ async function renderIncidentDetailView(container, ticketNumber) {
           <!-- Contextual Actions -->
           <div class="flex items-center space-x-2">
             ${!isEndUser ? `
-              <button onclick="triggerTicketCopilot('${inc.number}')" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center space-x-1.5">
+              <button data-click="triggerTicketCopilot('${inc.number}')" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center space-x-1.5">
                 <i data-lucide="bot" class="w-4 h-4"></i>
                 <span>Ask AI Copilot</span>
               </button>
             ` : ''}
 
             ${isSupportOrAdmin ? `
-              <button onclick="assignToMe(${inc.id})" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
+              <button data-click="assignToMe(${inc.id})" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
                 Assign to Me
               </button>
-              <button onclick="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="user-check" class="w-3.5 h-3.5 text-purple-600"></i>
                 <span>Reassign Ticket</span>
               </button>
-              <button onclick="openPriorityModal(${inc.id}, '${inc.priority}')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openPriorityModal(${inc.id}, '${inc.priority}')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-500"></i>
                 <span>Change Priority</span>
               </button>
-              <button onclick="openStatusModal(${inc.id}, '${inc.status}', 'Incident')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openStatusModal(${inc.id}, '${inc.status}', 'Incident')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-blue-500"></i>
                 <span>Update Status</span>
               </button>
               ${inc.status !== 'Resolved' && inc.status !== 'Closed' ? `
-                <button onclick="openResolveModal(${inc.id})" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                <button data-click="openResolveModal(${inc.id})" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
                   Resolve Incident
                 </button>
               ` : ''}
@@ -2994,7 +3134,7 @@ async function renderIncidentDetailView(container, ticketNumber) {
               <div class="flex items-center space-x-2.5">
                 <span class="text-xl font-black text-purple-600">${inc.number}</span>
                 ${isSupportOrAdmin ? `
-                  <button onclick="openPriorityModal(${inc.id}, '${inc.priority}')" title="Modify priority" class="px-2.5 py-0.5 rounded text-xs font-bold badge-${inc.priority.toLowerCase()} hover:opacity-80 flex items-center space-x-1 cursor-pointer transition-opacity">
+                  <button data-click="openPriorityModal(${inc.id}, '${inc.priority}')" title="Modify priority" class="px-2.5 py-0.5 rounded text-xs font-bold badge-${inc.priority.toLowerCase()} hover:opacity-80 flex items-center space-x-1 cursor-pointer transition-opacity">
                     <span>${inc.priority}</span>
                     <i data-lucide="edit-2" class="w-3 h-3"></i>
                   </button>
@@ -3003,7 +3143,7 @@ async function renderIncidentDetailView(container, ticketNumber) {
                 `}
                 ${isSupportOrAdmin ? `
                   <div class="inline-flex items-center space-x-1">
-                    <select onchange="quickUpdateStatus(event, 'Incident', ${inc.id}, this.value, '${inc.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
+                    <select data-change="quickUpdateStatus(event, 'Incident', ${inc.id}, this.value, '${inc.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
                       ${['New', 'Active', 'In Progress', 'On Hold', 'Resolved', 'Closed', 'Canceled'].map(s => `<option value="${s}" ${s === inc.status ? 'selected' : ''}>${s}</option>`).join('')}
                     </select>
                   </div>
@@ -3049,14 +3189,14 @@ async function renderIncidentDetailView(container, ticketNumber) {
               <span class="text-slate-400">Assignment Group:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${inc.assignment_group_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="text-purple-600 hover:text-purple-700" title="Reassign"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="text-purple-600 hover:text-purple-700" title="Reassign"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
               <span class="text-slate-400">Assigned To:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${inc.assigned_to_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="text-purple-600 hover:text-purple-700" title="Reassign"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${inc.id}, ${inc.assignment_group_id || 'null'}, ${inc.assigned_to_id || 'null'}, ${inc.project_id || 'null'}, ${inc.application_id || 'null'}, '${inc.priority || 'P3'}')" class="text-purple-600 hover:text-purple-700" title="Reassign"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
@@ -3077,12 +3217,12 @@ async function renderIncidentDetailView(container, ticketNumber) {
         <!-- TICKET TABS -->
         <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
           <div class="border-b border-[var(--border-color)] flex space-x-1 p-2 bg-[var(--bg-tertiary)] text-xs font-semibold">
-            <button onclick="switchTicketTab('overview')" id="tabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview</button>
-            <button onclick="switchTicketTab('conversation')" id="tabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
+            <button data-click="switchTicketTab('overview')" id="tabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview</button>
+            <button data-click="switchTicketTab('conversation')" id="tabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
               Communication (${(inc.comments || []).length + (inc.work_notes || []).length})
             </button>
-            <button onclick="switchTicketTab('sla')" id="tabBtn_sla" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">SLA Timers</button>
-            <button onclick="switchTicketTab('timeline')" id="tabBtn_timeline" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">Audit Timeline</button>
+            <button data-click="switchTicketTab('sla')" id="tabBtn_sla" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">SLA Timers</button>
+            <button data-click="switchTicketTab('timeline')" id="tabBtn_timeline" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">Audit Timeline</button>
           </div>
 
           <!-- TAB CONTENT: OVERVIEW -->
@@ -3193,9 +3333,9 @@ async function renderIncidentDetailView(container, ticketNumber) {
             <!-- Post New Comment or Work Note -->
             <div class="pt-4 border-t border-[var(--border-color)]">
               <div class="flex space-x-2 mb-2">
-                <button onclick="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Customer Comment</button>
+                <button data-click="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Customer Comment</button>
                 ${canPostWorkNote ? `
-                  <button onclick="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
+                  <button data-click="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
                 ` : ''}
               </div>
               <textarea id="commentBox" rows="3" placeholder="Type customer-visible comment..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/30"></textarea>
@@ -3205,19 +3345,19 @@ async function renderIncidentDetailView(container, ticketNumber) {
                 <label class="cursor-pointer inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] text-xs text-slate-600 dark:text-slate-300 font-medium transition-colors shadow-sm">
                   <i data-lucide="paperclip" class="w-3.5 h-3.5 text-purple-600"></i>
                   <span>Attach Screenshot / Logs</span>
-                  <input type="file" id="commentFileInput" class="hidden" multiple onchange="handleCommentFilesSelected(event)">
+                  <input type="file" id="commentFileInput" class="hidden" multiple data-change="handleCommentFilesSelected(event)">
                 </label>
                 <div id="commentFilesList" class="flex flex-wrap gap-1.5 text-xs"></div>
               </div>
 
               <div class="mt-3 flex justify-between items-center">
                 ${!isEndUser ? `
-                  <button onclick="triggerDraftCopilot('${inc.number}')" class="text-xs text-indigo-600 hover:underline flex items-center space-x-1">
+                  <button data-click="triggerDraftCopilot('${inc.number}')" class="text-xs text-indigo-600 hover:underline flex items-center space-x-1">
                     <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
                     <span>AI Assist: Draft Response</span>
                   </button>
                 ` : '<div></div>'}
-                <button onclick="submitTicketComment(${inc.id})" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+                <button data-click="submitTicketComment(${inc.id})" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
                   <i data-lucide="send" class="w-3.5 h-3.5"></i>
                   <span>Post Update</span>
                 </button>
@@ -3341,7 +3481,7 @@ function renderCommentFilesList() {
       <i data-lucide="${file.type?.includes('image') ? 'image' : 'file-text'}" class="w-3.5 h-3.5 text-purple-600 shrink-0"></i>
       <span class="truncate max-w-[140px] font-medium">${file.name}</span>
       <span class="text-[10px] text-slate-400">(${(file.size / 1024).toFixed(1)}KB)</span>
-      <button type="button" onclick="removePendingCommentFile(${idx})" class="text-slate-400 hover:text-red-500 ml-1">
+      <button type="button" data-click="removePendingCommentFile(${idx})" class="text-slate-400 hover:text-red-500 ml-1">
         <i data-lucide="x" class="w-3 h-3"></i>
       </button>
     </span>
@@ -3503,12 +3643,12 @@ async function openReassignModal(ticketId, currentGroupId, currentAssigneeId, cu
             <i data-lucide="user-check" class="w-5 h-5 text-purple-600"></i>
             <h2 class="text-base font-bold">Reassign ${ticketType} & Update Routing</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
-        <form onsubmit="confirmReassign(event, ${ticketId})" class="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+        <form data-submit="confirmReassign(event, ${ticketId})" class="p-5 space-y-4 text-xs overflow-y-auto flex-1">
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Target Project</label>
-            <select id="reassign_proj" onchange="onReassignProjectChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+            <select id="reassign_proj" data-change="onReassignProjectChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
               <option value="">-- Select Project --</option>
               ${projects.map(p => `<option value="${p.id}" ${p.id == selectedProjId ? 'selected' : ''}>${p.name}</option>`).join('')}
             </select>
@@ -3516,7 +3656,7 @@ async function openReassignModal(ticketId, currentGroupId, currentAssigneeId, cu
 
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Application (Scoped to Project)</label>
-            <select id="reassign_app" onchange="onReassignAppChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+            <select id="reassign_app" data-change="onReassignAppChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
               <!-- populated dynamically -->
             </select>
           </div>
@@ -3534,7 +3674,7 @@ async function openReassignModal(ticketId, currentGroupId, currentAssigneeId, cu
 
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Assignment Group (Scoped or Cross-Project Queues)</label>
-            <select id="reassign_group" onchange="onReassignGroupChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+            <select id="reassign_group" data-change="onReassignGroupChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
               <!-- populated dynamically -->
             </select>
             <p class="text-[10px] text-slate-400 mt-1">Reassign within project frontline (L2), engineering (L3), or transfer to other project/shared queues.</p>
@@ -3548,7 +3688,7 @@ async function openReassignModal(ticketId, currentGroupId, currentAssigneeId, cu
           </div>
 
           <div class="pt-4 border-t border-[var(--border-color)] flex justify-end space-x-2 shrink-0">
-            <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+            <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
             <button type="submit" class="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold">Confirm Reassignment</button>
           </div>
         </form>
@@ -3742,7 +3882,7 @@ async function confirmReassign(e, ticketId) {
       body: JSON.stringify(payload)
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       reloadActiveTicketDetailView(ticketType);
     } else {
       const err = await res.json().catch(() => ({}));
@@ -3765,9 +3905,9 @@ function openPriorityModal(ticketId, currentPriority, ticketType = 'Incident') {
             <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-500"></i>
             <h2 class="text-base font-bold">Change ${ticketType} Priority</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
-        <form onsubmit="confirmChangePriority(event, ${ticketId})" class="p-5 space-y-4 text-xs">
+        <form data-submit="confirmChangePriority(event, ${ticketId})" class="p-5 space-y-4 text-xs">
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Select Priority *</label>
             <select id="update_priority" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-bold">
@@ -3783,7 +3923,7 @@ function openPriorityModal(ticketId, currentPriority, ticketType = 'Incident') {
             <textarea id="update_priority_reason" rows="2" placeholder="e.g. Business escalation, scope downgraded..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs"></textarea>
           </div>
           <div class="pt-3 border-t border-[var(--border-color)] flex justify-end space-x-2">
-            <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+            <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
             <button type="submit" class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold">Update Priority</button>
           </div>
         </form>
@@ -3813,7 +3953,7 @@ async function confirmChangePriority(e, ticketId) {
       body: JSON.stringify({ priority: priVal, reason: reasonVal })
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       reloadActiveTicketDetailView(ticketType);
     } else {
       const err = await res.json().catch(() => ({}));
@@ -3846,9 +3986,9 @@ function openStatusModal(ticketId, currentStatus, ticketType = 'Incident') {
             <i data-lucide="refresh-cw" class="w-5 h-5 text-purple-600"></i>
             <h2 class="text-base font-bold">Update ${ticketType} Status</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
-        <form onsubmit="confirmChangeStatus(event, ${ticketId})" class="p-5 space-y-4 text-xs">
+        <form data-submit="confirmChangeStatus(event, ${ticketId})" class="p-5 space-y-4 text-xs">
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Current Status</label>
             <div class="p-2 rounded-lg bg-[var(--bg-tertiary)] font-bold text-[var(--text-primary)]">${currentStatus}</div>
@@ -3864,7 +4004,7 @@ function openStatusModal(ticketId, currentStatus, ticketType = 'Incident') {
             <textarea id="update_status_reason" rows="2" placeholder="e.g. Work initiated, testing verified..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs"></textarea>
           </div>
           <div class="pt-3 border-t border-[var(--border-color)] flex justify-end space-x-2">
-            <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+            <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
             <button type="submit" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold">Update Status</button>
           </div>
         </form>
@@ -3901,7 +4041,7 @@ async function confirmChangeStatus(e, ticketId) {
       body: JSON.stringify(bodyPayload)
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       reloadActiveTicketDetailView(ticketType);
     } else {
       const err = await res.json().catch(() => ({}));
@@ -3959,9 +4099,9 @@ function openApprovalDecisionModal(ticketId, ticketType) {
             <i data-lucide="check-circle-2" class="w-5 h-5 text-purple-600"></i>
             <h2 class="text-base font-bold">${ticketType} Approval Decision</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
-        <form onsubmit="confirmApprovalDecision(event, ${ticketId}, '${ticketType}')" class="p-5 space-y-4 text-xs">
+        <form data-submit="confirmApprovalDecision(event, ${ticketId}, '${ticketType}')" class="p-5 space-y-4 text-xs">
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Decision *</label>
             <select id="approval_decision_val" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-bold">
@@ -3974,7 +4114,7 @@ function openApprovalDecisionModal(ticketId, ticketType) {
             <textarea id="approval_decision_comments" rows="3" placeholder="Provide reason or conditional approval terms..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs"></textarea>
           </div>
           <div class="pt-3 border-t border-[var(--border-color)] flex justify-end space-x-2">
-            <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+            <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
             <button type="submit" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold">Submit Decision</button>
           </div>
         </form>
@@ -4003,7 +4143,7 @@ async function confirmApprovalDecision(e, ticketId, ticketType) {
       body: JSON.stringify({ decision, comments })
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       reloadActiveTicketDetailView(ticketType);
     } else {
       const err = await res.json().catch(() => ({}));
@@ -4106,12 +4246,12 @@ async function renderServiceRequestsView(container) {
           </div>
           <div class="flex items-center space-x-2">
             ${['support_member', 'group_manager', 'administrator', 'itsm_admin'].includes(state.currentUser?.role) ? `
-              <button onclick="openExportModal('service-requests')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
+              <button data-click="openExportModal('service-requests')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
                 <i data-lucide="download" class="w-4 h-4 text-purple-500"></i>
                 <span>Export Requests</span>
               </button>
             ` : ''}
-            <button onclick="openCreateModal('Service Request')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-1.5">
+            <button data-click="openCreateModal('Service Request')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-1.5">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>+ Request Service</span>
             </button>
@@ -4496,7 +4636,7 @@ function renderRequestRows(items, columns) {
     `;
   }
   return items.map(r => `
-    <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" onclick="window.location.hash='#/service-requests/${r.number}'">
+    <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" data-click="window.location.hash='#/service-requests/${r.number}'">
       ${columns.map(c => {
         if (c.column_key === 'number') return `<td class="p-3.5 font-bold text-purple-600">${r.number}</td>`;
         if (c.column_key === 'priority') return `<td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold badge-${(r.priority || 'P3').toLowerCase()}">${r.priority || 'P3'}</span></td>`;
@@ -4558,23 +4698,23 @@ async function renderRequestDetailView(container, reqNumber) {
 
           <div class="flex items-center space-x-2">
             ${isSupportOrAdmin ? `
-              <button onclick="assignToMe(${req.id}, 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
+              <button data-click="assignToMe(${req.id}, 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
                 Assign to Me
               </button>
-              <button onclick="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="user-check" class="w-3.5 h-3.5 text-purple-600"></i>
                 <span>Reassign Request</span>
               </button>
-              <button onclick="openPriorityModal(${req.id}, '${req.priority || 'P3'}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openPriorityModal(${req.id}, '${req.priority || 'P3'}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-500"></i>
                 <span>Change Priority</span>
               </button>
-              <button onclick="openStatusModal(${req.id}, '${req.status}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openStatusModal(${req.id}, '${req.status}', 'Service Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-blue-500"></i>
                 <span>Update Status</span>
               </button>
               ${req.approval_status === 'Pending' ? `
-                <button onclick="openApprovalDecisionModal(${req.id}, 'Service Request')" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1">
+                <button data-click="openApprovalDecisionModal(${req.id}, 'Service Request')" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1">
                   <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
                   <span>Review Approval</span>
                 </button>
@@ -4590,7 +4730,7 @@ async function renderRequestDetailView(container, reqNumber) {
               <div class="flex items-center space-x-2.5">
                 <span class="text-xl font-black text-purple-600">${req.number}</span>
                 ${isSupportOrAdmin ? `
-                  <button onclick="openPriorityModal(${req.id}, '${req.priority || 'P3'}', 'Service Request')" class="px-2.5 py-0.5 rounded text-xs font-bold badge-${(req.priority || 'P3').toLowerCase()} hover:opacity-80 flex items-center space-x-1 cursor-pointer">
+                  <button data-click="openPriorityModal(${req.id}, '${req.priority || 'P3'}', 'Service Request')" class="px-2.5 py-0.5 rounded text-xs font-bold badge-${(req.priority || 'P3').toLowerCase()} hover:opacity-80 flex items-center space-x-1 cursor-pointer">
                     <span>${req.priority || 'P3'}</span>
                     <i data-lucide="edit-2" class="w-3 h-3"></i>
                   </button>
@@ -4599,7 +4739,7 @@ async function renderRequestDetailView(container, reqNumber) {
                 `}
                 ${isSupportOrAdmin ? `
                   <div class="inline-flex items-center space-x-1">
-                    <select onchange="quickUpdateStatus(event, 'Service Request', ${req.id}, this.value, '${req.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
+                    <select data-change="quickUpdateStatus(event, 'Service Request', ${req.id}, this.value, '${req.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
                       ${['Submitted', 'Active', 'In Progress', 'Pending Approval', 'Approved', 'In Fulfillment', 'Fulfilled', 'Completed', 'Closed', 'Cancelled'].map(s => `<option value="${s}" ${s === req.status ? 'selected' : ''}>${s}</option>`).join('')}
                     </select>
                   </div>
@@ -4632,14 +4772,14 @@ async function renderRequestDetailView(container, reqNumber) {
               <span class="text-slate-400">Assignment Group:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${req.assignment_group_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
               <span class="text-slate-400">Assigned To:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${req.assigned_to_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${req.id}, ${req.assignment_group_id || 'null'}, ${req.assigned_to_id || 'null'}, ${req.project_id || 'null'}, ${req.application_id || 'null'}, '${req.priority || 'P3'}', 'Service Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
@@ -4652,11 +4792,11 @@ async function renderRequestDetailView(container, reqNumber) {
         <!-- TABS -->
         <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
           <div class="border-b border-[var(--border-color)] flex space-x-1 p-2 bg-[var(--bg-tertiary)] text-xs font-semibold">
-            <button onclick="switchRequestTab('overview')" id="reqTabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview</button>
-            <button onclick="switchRequestTab('conversation')" id="reqTabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
+            <button data-click="switchRequestTab('overview')" id="reqTabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview</button>
+            <button data-click="switchRequestTab('conversation')" id="reqTabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
               Communication (${(req.comments || []).length + (req.work_notes || []).length})
             </button>
-            <button onclick="switchRequestTab('approvals')" id="reqTabBtn_approvals" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
+            <button data-click="switchRequestTab('approvals')" id="reqTabBtn_approvals" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
               Approvals (${(req.approvals || []).length})
             </button>
           </div>
@@ -4730,9 +4870,9 @@ async function renderRequestDetailView(container, reqNumber) {
             <!-- Post New Comment / Work Note -->
             <div class="pt-4 border-t border-[var(--border-color)]">
               <div class="flex space-x-2 mb-2">
-                <button onclick="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Customer Comment</button>
+                <button data-click="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Customer Comment</button>
                 ${canPostWorkNote ? `
-                  <button onclick="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
+                  <button data-click="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
                 ` : ''}
               </div>
               <textarea id="commentBox" rows="3" placeholder="Type customer-visible comment..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/30"></textarea>
@@ -4741,13 +4881,13 @@ async function renderRequestDetailView(container, reqNumber) {
                 <label class="cursor-pointer inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] text-xs text-slate-600 dark:text-slate-300 font-medium transition-colors shadow-sm">
                   <i data-lucide="paperclip" class="w-3.5 h-3.5 text-purple-600"></i>
                   <span>Attach File / Logs</span>
-                  <input type="file" id="commentFileInput" class="hidden" multiple onchange="handleCommentFilesSelected(event)">
+                  <input type="file" id="commentFileInput" class="hidden" multiple data-change="handleCommentFilesSelected(event)">
                 </label>
                 <div id="commentFilesList" class="flex flex-wrap gap-1.5 text-xs"></div>
               </div>
 
               <div class="mt-3 flex justify-end">
-                <button onclick="submitTicketComment(${req.id}, 'Service Request')" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+                <button data-click="submitTicketComment(${req.id}, 'Service Request')" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
                   <i data-lucide="send" class="w-3.5 h-3.5"></i>
                   <span>Post Update</span>
                 </button>
@@ -4768,7 +4908,7 @@ async function renderRequestDetailView(container, reqNumber) {
                       ${appr.comments ? `<div class="text-[11px] text-slate-500 mt-1 italic">"${appr.comments}"</div>` : ''}
                     </div>
                     ${(appr.status === 'Pending' && isSupportOrAdmin) ? `
-                      <button onclick="openApprovalDecisionModal(${req.id}, 'Service Request')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold">
+                      <button data-click="openApprovalDecisionModal(${req.id}, 'Service Request')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold">
                         Decide Approval
                       </button>
                     ` : ''}
@@ -4896,12 +5036,12 @@ async function renderChangesView(container) {
           </div>
           <div class="flex items-center space-x-2">
             ${['support_member', 'group_manager', 'administrator', 'itsm_admin'].includes(state.currentUser?.role) ? `
-              <button onclick="openExportModal('changes')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
+              <button data-click="openExportModal('changes')" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm text-purple-600 dark:text-purple-300 transition-all">
                 <i data-lucide="download" class="w-4 h-4 text-purple-500"></i>
                 <span>Export Changes</span>
               </button>
             ` : ''}
-            <button onclick="openCreateModal('Change Request')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-1.5">
+            <button data-click="openCreateModal('Change Request')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow flex items-center space-x-1.5">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>+ New Change Request</span>
             </button>
@@ -5295,7 +5435,7 @@ function renderChangeRows(items, columns) {
     `;
   }
   return items.map(c => `
-    <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" onclick="window.location.hash='#/changes/${c.number}'">
+    <tr class="hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer" data-click="window.location.hash='#/changes/${c.number}'">
       ${columns.map(col => {
         if (col.column_key === 'number') return `<td class="p-3.5 font-bold text-purple-600">${c.number}</td>`;
         if (col.column_key === 'change_type') return `<td class="p-3.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${c.change_type === 'Emergency' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : (c.change_type === 'Standard' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300')}">${c.change_type}</span></td>`;
@@ -5359,23 +5499,23 @@ async function renderChangeDetailView(container, chgNumber) {
 
           <div class="flex items-center space-x-2">
             ${isSupportOrAdmin ? `
-              <button onclick="assignToMe(${chg.id}, 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
+              <button data-click="assignToMe(${chg.id}, 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold">
                 Assign to Me
               </button>
-              <button onclick="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="user-check" class="w-3.5 h-3.5 text-purple-600"></i>
                 <span>Reassign Change</span>
               </button>
-              <button onclick="openPriorityModal(${chg.id}, '${chg.priority || 'P3'}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openPriorityModal(${chg.id}, '${chg.priority || 'P3'}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-500"></i>
                 <span>Change Priority</span>
               </button>
-              <button onclick="openStatusModal(${chg.id}, '${chg.change_status}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
+              <button data-click="openStatusModal(${chg.id}, '${chg.change_status}', 'Change Request')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-blue-500"></i>
                 <span>Update Status</span>
               </button>
               ${chg.approval_status === 'Pending' ? `
-                <button onclick="openApprovalDecisionModal(${chg.id}, 'Change Request')" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1">
+                <button data-click="openApprovalDecisionModal(${chg.id}, 'Change Request')" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1">
                   <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
                   <span>CAB Decision</span>
                 </button>
@@ -5393,7 +5533,7 @@ async function renderChangeDetailView(container, chgNumber) {
                 <span class="px-2.5 py-0.5 rounded text-xs font-bold ${chg.change_type === 'Emergency' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : (chg.change_type === 'Standard' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300')}">${chg.change_type}</span>
                 ${isSupportOrAdmin ? `
                   <div class="inline-flex items-center space-x-1">
-                    <select onchange="quickUpdateStatus(event, 'Change Request', ${chg.id}, this.value, '${chg.change_status || chg.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
+                    <select data-change="quickUpdateStatus(event, 'Change Request', ${chg.id}, this.value, '${chg.change_status || chg.status}')" title="Change status directly" class="px-2.5 py-0.5 rounded text-xs font-bold bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-[var(--text-primary)] cursor-pointer focus:ring-2 focus:ring-purple-500">
                       ${['Draft', 'Active', 'Assess', 'Authorize', 'Scheduled', 'Implement', 'Review', 'Closed', 'Canceled'].map(s => `<option value="${s}" ${s === (chg.change_status || chg.status) ? 'selected' : ''}>${s}</option>`).join('')}
                     </select>
                   </div>
@@ -5430,14 +5570,14 @@ async function renderChangeDetailView(container, chgNumber) {
               <span class="text-slate-400">Assignment Group:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${chg.assignment_group_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
               <span class="text-slate-400">Assigned To:</span>
               <div class="flex items-center space-x-1.5">
                 <span class="font-semibold block text-[var(--text-primary)]">${chg.assigned_to_name || 'Unassigned'}</span>
-                ${isSupportOrAdmin ? `<button onclick="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
+                ${isSupportOrAdmin ? `<button data-click="openReassignModal(${chg.id}, ${chg.assignment_group_id || 'null'}, ${chg.assigned_to_id || 'null'}, ${chg.project_id || 'null'}, ${chg.application_id || 'null'}, '${chg.priority || 'P3'}', 'Change Request')" class="text-purple-600 hover:text-purple-700"><i data-lucide="user-cog" class="w-3.5 h-3.5"></i></button>` : ''}
               </div>
             </div>
             <div>
@@ -5454,11 +5594,11 @@ async function renderChangeDetailView(container, chgNumber) {
         <!-- TABS -->
         <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
           <div class="border-b border-[var(--border-color)] flex space-x-1 p-2 bg-[var(--bg-tertiary)] text-xs font-semibold">
-            <button onclick="switchChangeTab('overview')" id="chgTabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview & Plans</button>
-            <button onclick="switchChangeTab('conversation')" id="chgTabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
+            <button data-click="switchChangeTab('overview')" id="chgTabBtn_overview" class="px-4 py-2 rounded-lg bg-[var(--card-bg)] shadow-sm text-purple-600">Overview & Plans</button>
+            <button data-click="switchChangeTab('conversation')" id="chgTabBtn_conversation" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
               Communication (${(chg.comments || []).length + (chg.work_notes || []).length})
             </button>
-            <button onclick="switchChangeTab('approvals')" id="chgTabBtn_approvals" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
+            <button data-click="switchChangeTab('approvals')" id="chgTabBtn_approvals" class="px-4 py-2 rounded-lg hover:bg-[var(--card-bg)] text-slate-400">
               CAB Approvals (${(chg.approvals || []).length})
             </button>
           </div>
@@ -5551,9 +5691,9 @@ async function renderChangeDetailView(container, chgNumber) {
             <!-- Post New Comment / Work Note -->
             <div class="pt-4 border-t border-[var(--border-color)]">
               <div class="flex space-x-2 mb-2">
-                <button onclick="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Stakeholder Comment</button>
+                <button data-click="setCommentType('customer')" id="commTypeBtn_customer" class="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">Stakeholder Comment</button>
                 ${canPostWorkNote ? `
-                  <button onclick="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
+                  <button data-click="setCommentType('worknote')" id="commTypeBtn_worknote" class="px-3 py-1 rounded text-xs font-semibold bg-[var(--bg-tertiary)] text-slate-400">🔒 Work Note</button>
                 ` : ''}
               </div>
               <textarea id="commentBox" rows="3" placeholder="Type stakeholder comment..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/30"></textarea>
@@ -5562,13 +5702,13 @@ async function renderChangeDetailView(container, chgNumber) {
                 <label class="cursor-pointer inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] text-xs text-slate-600 dark:text-slate-300 font-medium transition-colors shadow-sm">
                   <i data-lucide="paperclip" class="w-3.5 h-3.5 text-purple-600"></i>
                   <span>Attach Release Files / Architecture</span>
-                  <input type="file" id="commentFileInput" class="hidden" multiple onchange="handleCommentFilesSelected(event)">
+                  <input type="file" id="commentFileInput" class="hidden" multiple data-change="handleCommentFilesSelected(event)">
                 </label>
                 <div id="commentFilesList" class="flex flex-wrap gap-1.5 text-xs"></div>
               </div>
 
               <div class="mt-3 flex justify-end">
-                <button onclick="submitTicketComment(${chg.id}, 'Change Request')" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+                <button data-click="submitTicketComment(${chg.id}, 'Change Request')" id="btnPostComment" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
                   <i data-lucide="send" class="w-3.5 h-3.5"></i>
                   <span>Post Update</span>
                 </button>
@@ -5589,7 +5729,7 @@ async function renderChangeDetailView(container, chgNumber) {
                       ${appr.comments ? `<div class="text-[11px] text-slate-500 mt-1 italic">"${appr.comments}"</div>` : ''}
                     </div>
                     ${(appr.status === 'Pending' && isSupportOrAdmin) ? `
-                      <button onclick="openApprovalDecisionModal(${chg.id}, 'Change Request')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold">
+                      <button data-click="openApprovalDecisionModal(${chg.id}, 'Change Request')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold">
                         CAB Decision
                       </button>
                     ` : ''}
@@ -5643,7 +5783,7 @@ async function renderKnowledgeView(container) {
             <p class="text-sm text-slate-500">${isEndUser ? 'Browse verified troubleshooting guides, standard operating procedures, and FAQs.' : 'Standard operating procedures, verified troubleshooting guides, and incident runbooks.'}</p>
           </div>
           ${!isEndUser ? `
-            <button onclick="openCreateArticleModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow">
+            <button data-click="openCreateArticleModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow">
               + New Article
             </button>
           ` : `
@@ -5671,8 +5811,8 @@ async function renderKnowledgeView(container) {
               </div>
               <div class="flex justify-end gap-2 pt-3">
                 ${!isEndUser ? `
-                  <button onclick='openCreateArticleModal(${JSON.stringify(a).replace(/'/g, "&#39;")})' class="text-xs text-purple-600 dark:text-purple-400 font-bold hover:underline">Edit</button>
-                  ${(state.currentUser?.role === 'administrator' || state.currentUser?.role === 'support_member' || state.currentUser?.role === 'group_manager' || (state.currentUser?.admin_projects || []).length > 0) ? `<button onclick="deleteKnowledgeArticle(${a.id})" class="text-xs text-red-600 font-bold hover:underline">Delete</button>` : ''}
+                  <button data-click='openCreateArticleModal(${JSON.stringify(a).replace(/'/g, "&#39;")})' class="text-xs text-purple-600 dark:text-purple-400 font-bold hover:underline">Edit</button>
+                  ${(state.currentUser?.role === 'administrator' || state.currentUser?.role === 'support_member' || state.currentUser?.role === 'group_manager' || (state.currentUser?.admin_projects || []).length > 0) ? `<button data-click="deleteKnowledgeArticle(${a.id})" class="text-xs text-red-600 font-bold hover:underline">Delete</button>` : ''}
                 ` : `<span class="text-[11px] text-slate-400 italic">Self-Help Reference</span>`}
               </div>
             </div>
@@ -5698,12 +5838,12 @@ async function openCreateArticleModal(article = null) {
   document.getElementById('modalContainer').innerHTML = `
     <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl">
-        <div class="flex items-center justify-between mb-4"><h2 class="font-bold">${article ? 'Edit Knowledge Article' : 'Create Knowledge Article'}</h2><button onclick="closeAdminModal()">✕</button></div>
-        <form onsubmit="saveKnowledgeArticle(event, ${article?.id || 'null'})" class="space-y-3 admin-form text-xs">
+        <div class="flex items-center justify-between mb-4"><h2 class="font-bold">${article ? 'Edit Knowledge Article' : 'Create Knowledge Article'}</h2><button data-click="closeAdminModal()">✕</button></div>
+        <form data-submit="saveKnowledgeArticle(event, ${article?.id || 'null'})" class="space-y-3 admin-form text-xs">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3"><label>Title *<input id="kb_title" required value="${article?.title || ''}"></label><label>Category *<input id="kb_category" required value="${article?.category || 'Troubleshooting'}"></label></div>
           <label>Application<select id="kb_application"><option value="">General</option>${apps.map(a => `<option value="${a.id}" ${a.id === selectedApp ? 'selected' : ''}>${a.name}</option>`).join('')}</select></label>
           <label>Content *<textarea id="kb_content" required rows="12">${article?.content || ''}</textarea></label>
-          <div class="flex justify-end gap-2 pt-2"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">${article ? 'Save Changes' : 'Create Article'}</button></div>
+          <div class="flex justify-end gap-2 pt-2"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">${article ? 'Save Changes' : 'Create Article'}</button></div>
         </form>
       </div>
     </div>`;
@@ -5764,7 +5904,7 @@ async function renderApplicationsView(container) {
       <div class="flex items-center justify-between gap-4">
         <div><h1 class="text-2xl font-black tracking-tight">Application Portfolio Catalog</h1>
         <p class="text-sm text-slate-500">Critical tier-1 and tier-2 organizational services.</p>
-        </div>${canManageApps ? `<div class="flex gap-2"><button onclick="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ Application</button><button onclick="window.location.hash='#/admin/entities'" class="border border-[var(--border-color)] hover:bg-[var(--bg-tertiary)] px-3 py-2 rounded-xl text-xs font-semibold">Manage Teams</button></div>` : ''}</div>
+        </div>${canManageApps ? `<div class="flex gap-2"><button data-click="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ Application</button><button data-click="window.location.hash='#/admin/entities'" class="border border-[var(--border-color)] hover:bg-[var(--bg-tertiary)] px-3 py-2 rounded-xl text-xs font-semibold">Manage Teams</button></div>` : ''}</div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
         ${apps.map(a => {
           const canDeleteApp = isGlobalAdmin || (isProjectAdmin && a.project_name && adminProjects.map(p => p.toLowerCase()).includes(a.project_name.toLowerCase()));
@@ -5783,8 +5923,8 @@ async function renderApplicationsView(container) {
               <div>Hours: <b class="text-[var(--text-primary)]">${a.support_hours}</b></div>
               ${canDeleteApp ? `
               <div class="flex justify-end gap-2 pt-2 border-t border-[var(--border-color)]">
-                <button onclick="openAdminEntityModal('application', ${a.id})" class="text-purple-600 hover:text-purple-700 text-xs font-bold">Edit</button>
-                <button onclick="deleteAdminEntity('application', ${a.id}, '${a.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-0.5"><i data-lucide="trash-2" class="w-3 h-3"></i> Delete</button>
+                <button data-click="openAdminEntityModal('application', ${a.id})" class="text-purple-600 hover:text-purple-700 text-xs font-bold">Edit</button>
+                <button data-click="deleteAdminEntity('application', ${a.id}, '${a.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-0.5"><i data-lucide="trash-2" class="w-3 h-3"></i> Delete</button>
               </div>` : ''}
             </div>
           </div>
@@ -5793,7 +5933,7 @@ async function renderApplicationsView(container) {
           <div class="md:col-span-3 p-8 text-center rounded-2xl border border-[var(--border-color)] bg-[var(--card-bg)] text-slate-400">
             <p class="font-bold text-sm mb-1 text-[var(--text-primary)]">No applications registered yet</p>
             <p class="text-xs mb-4">Register your first application under an associated project to start managing tickets, SLAs, and categories.</p>
-            ${canManageApps ? `<button onclick="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ Application</button>` : ''}
+            ${canManageApps ? `<button data-click="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ Application</button>` : ''}
           </div>
         `}
       </div>
@@ -5821,7 +5961,7 @@ async function renderProjectsView(container) {
             <h1 class="text-2xl font-black tracking-tight">Project Management & Routing Defaults</h1>
             <p class="text-sm text-slate-500">Configured projects with support hours, default assignment groups, and SLA policies.</p>
           </div>
-          ${isGlobalAdmin ? `<button onclick="window.location.hash='#/admin/entities'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ New Project</button>` : ''}
+          ${isGlobalAdmin ? `<button data-click="window.location.hash='#/admin/entities'" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">+ New Project</button>` : ''}
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
           ${projects.map(p => `
@@ -5841,8 +5981,8 @@ async function renderProjectsView(container) {
                 </div>
               </div>
               <div class="flex items-center justify-end gap-2 pt-3 mt-3 border-t border-[var(--border-color)]">
-                <button onclick="openAdminEntityModal('project', ${p.id})" class="text-indigo-600 hover:text-indigo-700 text-xs font-bold">Configure</button>
-                ${isGlobalAdmin ? `<button onclick="deleteAdminEntity('project', ${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-0.5"><i data-lucide="trash-2" class="w-3 h-3"></i> Delete</button>` : ''}
+                <button data-click="openAdminEntityModal('project', ${p.id})" class="text-indigo-600 hover:text-indigo-700 text-xs font-bold">Configure</button>
+                ${isGlobalAdmin ? `<button data-click="deleteAdminEntity('project', ${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-0.5"><i data-lucide="trash-2" class="w-3 h-3"></i> Delete</button>` : ''}
               </div>
             </div>
           `).join('')}
@@ -5882,7 +6022,7 @@ async function renderOnCallRosterView(container) {
                   <h2 class="text-lg font-black tracking-tight text-[var(--text-primary)]">${p.project_name}</h2>
                 </div>
                 ${p.can_edit ? `
-                  <button onclick="openEditOnCallModal(${p.project_id}, '${p.project_name.replace(/'/g, "\\'")}')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-sm">
+                  <button data-click="openEditOnCallModal(${p.project_id}, '${p.project_name.replace(/'/g, "\\'")}')" class="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-sm">
                     <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
                     <span>Edit On-Call & Escalations</span>
                   </button>
@@ -5991,10 +6131,10 @@ async function openEditOnCallModal(projectId, projectName) {
               <i data-lucide="phone-call" class="w-5 h-5 text-purple-600"></i>
               <h2 class="text-base font-bold">Update On-Call & Escalations: ${data.project_name}</h2>
             </div>
-            <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+            <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
           </div>
 
-          <form onsubmit="submitEditOnCall(event, ${data.project_id})" class="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+          <form data-submit="submitEditOnCall(event, ${data.project_id})" class="p-5 space-y-4 text-xs overflow-y-auto flex-1">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label class="block font-semibold text-slate-400 mb-1">Level-2 On-Call Support</label>
@@ -6030,7 +6170,7 @@ async function openEditOnCallModal(projectId, projectName) {
             </div>
 
             <div class="pt-4 border-t border-[var(--border-color)] flex justify-end space-x-2 shrink-0">
-              <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+              <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-xl border border-[var(--border-color)] text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
               <button type="submit" class="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold shadow">Save On-Call Matrix</button>
             </div>
           </form>
@@ -6074,7 +6214,7 @@ async function submitEditOnCall(e, projectId) {
       body: JSON.stringify(payload)
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       renderOnCallRosterView(document.getElementById('mainApp'));
     } else {
       const err = await res.json().catch(() => ({}));
@@ -6188,9 +6328,9 @@ async function renderAdminEntityManagement(container) {
           <div><h1 class="text-2xl font-black tracking-tight">Applications, Projects & Support Teams</h1>
           <p class="text-sm text-slate-500">${isGlobalAdmin ? 'Full platform administration.' : `Project-scoped administration for: [${adminProjects.join(', ')}]`}</p></div>
           <div class="flex flex-wrap gap-2">
-            <button onclick="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Application</button>
-            ${isGlobalAdmin ? `<button onclick="openAdminEntityModal('project')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Project</button>` : ''}
-            ${isGlobalAdmin ? `<button onclick="openAdminEntityModal('group')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Assignment Group</button>` : ''}
+            <button data-click="openAdminEntityModal('application')" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Application</button>
+            ${isGlobalAdmin ? `<button data-click="openAdminEntityModal('project')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Project</button>` : ''}
+            ${isGlobalAdmin ? `<button data-click="openAdminEntityModal('group')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Assignment Group</button>` : ''}
           </div>
         </div>
 
@@ -6218,7 +6358,7 @@ async function renderAdminEntityManagement(container) {
                       <div class="text-xs font-bold text-indigo-600 uppercase tracking-wider">${proj.project_id}</div>
                       <h3 class="font-bold text-sm text-[var(--text-primary)]">${proj.name}</h3>
                     </div>
-                    <button onclick="openAdminEntityModal('project', ${proj.id})" class="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5">
+                    <button data-click="openAdminEntityModal('project', ${proj.id})" class="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5">
                       <i data-lucide="settings-2" class="w-3.5 h-3.5"></i> Configure Queues
                     </button>
                   </div>
@@ -6228,7 +6368,7 @@ async function renderAdminEntityManagement(container) {
                     <div class="p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-2">
                       <div class="flex items-center justify-between">
                         <span class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">Level-2 Frontline</span>
-                        ${l2Group ? `<button onclick="openAdminEntityModal('group', ${l2Group.id})" class="text-emerald-700 dark:text-emerald-300 font-bold text-[10px] hover:underline flex items-center gap-0.5"><i data-lucide="edit-3" class="w-3 h-3"></i> Edit</button>` : ''}
+                        ${l2Group ? `<button data-click="openAdminEntityModal('group', ${l2Group.id})" class="text-emerald-700 dark:text-emerald-300 font-bold text-[10px] hover:underline flex items-center gap-0.5"><i data-lucide="edit-3" class="w-3 h-3"></i> Edit</button>` : ''}
                       </div>
                       <div class="font-bold text-xs text-[var(--text-primary)]">${l2Group ? l2Group.name : 'Not configured (Click Configure Queues)'}</div>
                       <div class="text-[11px] text-slate-500 space-y-0.5">
@@ -6242,7 +6382,7 @@ async function renderAdminEntityManagement(container) {
                     <div class="p-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 space-y-2">
                       <div class="flex items-center justify-between">
                         <span class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">Level-3 Advanced</span>
-                        ${l3Group ? `<button onclick="openAdminEntityModal('group', ${l3Group.id})" class="text-blue-700 dark:text-blue-300 font-bold text-[10px] hover:underline flex items-center gap-0.5"><i data-lucide="edit-3" class="w-3 h-3"></i> Edit</button>` : ''}
+                        ${l3Group ? `<button data-click="openAdminEntityModal('group', ${l3Group.id})" class="text-blue-700 dark:text-blue-300 font-bold text-[10px] hover:underline flex items-center gap-0.5"><i data-lucide="edit-3" class="w-3 h-3"></i> Edit</button>` : ''}
                       </div>
                       <div class="font-bold text-xs text-[var(--text-primary)]">${l3Group ? l3Group.name : 'Not configured (Click Configure Queues)'}</div>
                       <div class="text-[11px] text-slate-500 space-y-0.5">
@@ -6263,21 +6403,21 @@ async function renderAdminEntityManagement(container) {
             <div class="px-4 py-3 border-b border-[var(--border-color)] font-bold text-sm">Applications <span class="text-slate-400">(${apps.length})</span></div>
             <div class="divide-y divide-[var(--border-color)] max-h-[480px] overflow-y-auto">${apps.map(a => {
               const canDeleteApp = isGlobalAdmin || (isProjectAdmin && a.project_name && adminProjects.map(p => p.toLowerCase()).includes(a.project_name.toLowerCase()));
-              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${a.name}</div><div class="text-[11px] text-purple-600 mt-1">${a.app_id} · ${a.criticality} ${a.project_name ? `· <span class="text-indigo-600 font-semibold">[${a.project_name}]</span>` : ''}</div></div><div class="flex items-center gap-2"><button onclick="openAdminEntityModal('application', ${a.id})" class="text-purple-600 text-[10px] font-bold">Edit</button>${canDeleteApp ? `<button onclick="deleteAdminEntity('application', ${a.id}, '${a.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-[10px] font-bold">Delete</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">Owner: ${a.business_owner || 'Not configured'} · Team: ${a.default_assignment_group_name || 'Not configured'}</div></div>`;
+              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${a.name}</div><div class="text-[11px] text-purple-600 mt-1">${a.app_id} · ${a.criticality} ${a.project_name ? `· <span class="text-indigo-600 font-semibold">[${a.project_name}]</span>` : ''}</div></div><div class="flex items-center gap-2"><button data-click="openAdminEntityModal('application', ${a.id})" class="text-purple-600 text-[10px] font-bold">Edit</button>${canDeleteApp ? `<button data-click="deleteAdminEntity('application', ${a.id}, '${a.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-[10px] font-bold">Delete</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">Owner: ${a.business_owner || 'Not configured'} · Team: ${a.default_assignment_group_name || 'Not configured'}</div></div>`;
             }).join('') || '<div class="p-4 text-sm text-slate-400">No applications configured.</div>'}</div>
           </section>
           <section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden">
             <div class="px-4 py-3 border-b border-[var(--border-color)] font-bold text-sm">Projects <span class="text-slate-400">(${projects.length})</span></div>
             <div class="divide-y divide-[var(--border-color)] max-h-[480px] overflow-y-auto">${projects.map(p => {
               const canEditP = isGlobalAdmin || (isProjectAdmin && adminProjects.includes(p.name));
-              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${p.name}</div><div class="text-[11px] text-indigo-600 mt-1">${p.project_id} · ${p.application_name || 'Standalone'}</div></div><div class="flex items-center gap-2">${canEditP ? `<button onclick="openAdminEntityModal('project', ${p.id})" class="text-indigo-600 text-[10px] font-bold">Edit</button>` : ''}${isGlobalAdmin ? `<button onclick="deleteAdminEntity('project', ${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-[10px] font-bold">Delete</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">Manager: ${p.project_manager || 'Not configured'} · L2 Queue: ${p.l2_assignment_group_name || p.default_assignment_group_name || 'Not configured'} · L3 Queue: ${p.l3_assignment_group_name || 'Not configured'}</div></div>`;
+              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${p.name}</div><div class="text-[11px] text-indigo-600 mt-1">${p.project_id} · ${p.application_name || 'Standalone'}</div></div><div class="flex items-center gap-2">${canEditP ? `<button data-click="openAdminEntityModal('project', ${p.id})" class="text-indigo-600 text-[10px] font-bold">Edit</button>` : ''}${isGlobalAdmin ? `<button data-click="deleteAdminEntity('project', ${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-[10px] font-bold">Delete</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">Manager: ${p.project_manager || 'Not configured'} · L2 Queue: ${p.l2_assignment_group_name || p.default_assignment_group_name || 'Not configured'} · L3 Queue: ${p.l3_assignment_group_name || 'Not configured'}</div></div>`;
             }).join('') || '<div class="p-4 text-sm text-slate-400">No projects configured.</div>'}</div>
           </section>
           <section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden">
             <div class="px-4 py-3 border-b border-[var(--border-color)] font-bold text-sm">Assignment Groups <span class="text-slate-400">(${groups.length})</span></div>
             <div class="divide-y divide-[var(--border-color)] max-h-[480px] overflow-y-auto">${groups.map(g => {
               const canEditG = isGlobalAdmin || (isProjectAdmin && adminProjects.some(p => g.name.toLowerCase().includes(p.toLowerCase())));
-              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${g.name}</div><div class="text-[11px] text-emerald-600 mt-1">${g.group_id} · ${g.member_count} members</div></div><div class="flex gap-2">${canEditG ? `<button onclick="openAdminEntityModal('group', ${g.id})" class="text-emerald-600 text-[10px] font-bold">Edit</button>` : ''}${isGlobalAdmin ? `<button onclick="openDistributionListModal(${g.id}, '${g.name.replace(/'/g, "\\'")}')" class="shrink-0 border border-emerald-500 text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded-lg text-[10px] font-bold">+ DL</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">On call: ${g.on_call_contact || 'Not configured'} · L1: ${g.first_escalation_contact || '—'} · L2: ${g.second_escalation_contact || '—'}</div></div>`;
+              return `<div class="p-4"><div class="flex justify-between gap-2"><div><div class="font-bold text-sm">${g.name}</div><div class="text-[11px] text-emerald-600 mt-1">${g.group_id} · ${g.member_count} members</div></div><div class="flex gap-2">${canEditG ? `<button data-click="openAdminEntityModal('group', ${g.id})" class="text-emerald-600 text-[10px] font-bold">Edit</button>` : ''}${isGlobalAdmin ? `<button data-click="openDistributionListModal(${g.id}, '${g.name.replace(/'/g, "\\'")}')" class="shrink-0 border border-emerald-500 text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded-lg text-[10px] font-bold">+ DL</button>` : ''}</div></div><div class="text-xs text-slate-500 mt-2">On call: ${g.on_call_contact || 'Not configured'} · L1: ${g.first_escalation_contact || '—'} · L2: ${g.second_escalation_contact || '—'}</div></div>`;
             }).join('') || '<div class="p-4 text-sm text-slate-400">No assignment groups configured.</div>'}</div>
           </section>
         </div>
@@ -6416,7 +6556,7 @@ async function openAdminEntityModal(type, entityId = null) {
     false
   );
 
-  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><div><h2 class="font-bold">${title}</h2><p class="text-[11px] text-slate-400">Fields can be updated at any time. Additional fields accept a JSON object.</p></div><button onclick="closeAdminModal()">✕</button></div><form onsubmit="submitAdminEntity(event, '${type}', ${entityId || 'null'})" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs admin-form">${fields}<div class="md:col-span-2 flex justify-between items-center pt-3 border-t border-[var(--border-color)] mt-2"><div>${canDeleteCurrent ? `<button type="button" onclick="deleteAdminEntity('${type}', ${entityId}, '${(record?.name || '').replace(/'/g, "\\'")}', true)" class="px-3 py-2 bg-red-500/10 text-red-600 hover:bg-red-500/20 rounded-lg font-bold border border-red-200 dark:border-red-900/50 flex items-center gap-1.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete ${type === 'application' ? 'Application' : 'Project'}</button>` : ''}</div><div class="flex gap-2"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">${entityId ? 'Save changes' : 'Create'}</button></div></div></form></div></div>`;
+  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><div><h2 class="font-bold">${title}</h2><p class="text-[11px] text-slate-400">Fields can be updated at any time. Additional fields accept a JSON object.</p></div><button data-click="closeAdminModal()">✕</button></div><form data-submit="submitAdminEntity(event, '${type}', ${entityId || 'null'})" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs admin-form">${fields}<div class="md:col-span-2 flex justify-between items-center pt-3 border-t border-[var(--border-color)] mt-2"><div>${canDeleteCurrent ? `<button type="button" data-click="deleteAdminEntity('${type}', ${entityId}, '${(record?.name || '').replace(/'/g, "\\'")}', true)" class="px-3 py-2 bg-red-500/10 text-red-600 hover:bg-red-500/20 rounded-lg font-bold border border-red-200 dark:border-red-900/50 flex items-center gap-1.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete ${type === 'application' ? 'Application' : 'Project'}</button>` : ''}</div><div class="flex gap-2"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">${entityId ? 'Save changes' : 'Create'}</button></div></div></form></div></div>`;
   lucide?.createIcons?.();
 }
 
@@ -6456,7 +6596,7 @@ async function deleteAdminEntity(type, entityId, entityName, fromModal = false) 
   }
 }
 
-function closeAdminModal() { document.getElementById('modalContainer').innerHTML = ''; }
+function closeAdminModal() { closeModalContainer(); }
 
 async function renderTicketConfigurationView(container) {
   container.innerHTML = `<div class="p-8 text-center text-slate-400">Loading ticket configuration…</div>`;
@@ -6470,7 +6610,7 @@ async function renderTicketConfigurationView(container) {
     if (![taxRes, colRes, appRes].every(r => r.ok)) throw new Error('Configuration API was not available');
     const [taxonomy, columns, apps] = await Promise.all([taxRes.json(), colRes.json(), appRes.json()]);
     state.ticketConfiguration = { taxonomy, columns, apps };
-    container.innerHTML = `<div class="space-y-6"><div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><h1 class="text-2xl font-black tracking-tight">Ticket Fields & Closure Notes</h1><p class="text-sm text-slate-500">Maintain closure categories and choose the information shown for Incidents, Service Requests, and Change Requests.</p></div><div class="flex gap-2"><button onclick="syncConfigurationToConsul()" class="border border-amber-500 text-amber-600 px-3 py-2 rounded-xl text-xs font-bold">Sync to Consul</button><button onclick="openTaxonomyModal()" class="bg-purple-600 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Closure option</button><button onclick="openColumnModal()" class="bg-cyan-600 text-white px-3 py-2 rounded-xl text-xs font-bold">+ List column</button></div></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-5"><section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden"><div class="p-4 border-b border-[var(--border-color)]"><h2 class="font-bold text-sm">Closure taxonomy</h2><p class="text-[11px] text-slate-400 mt-1">Application-specific options appear alongside the standard closure list.</p></div><div class="max-h-[480px] overflow-auto divide-y divide-[var(--border-color)]">${taxonomy.map(t => `<div class="p-3 flex items-center justify-between gap-3"><div><div class="text-xs font-bold">${t.category} <span class="text-slate-400 font-normal">/ ${t.subcategory}</span></div><div class="text-[10px] text-slate-400">${t.ticket_type} · ${t.application_name}</div></div><div class="flex gap-2"><button onclick="openTaxonomyModal(${t.id})" class="text-purple-600 text-[10px] font-bold">Edit</button><button onclick="deleteTicketConfig('taxonomy', ${t.id})" class="text-red-500 text-[10px] font-bold">Remove</button></div></div>`).join('') || '<div class="p-4 text-sm text-slate-400">No custom closure options yet.</div>'}</div></section><section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden"><div class="p-4 border-b border-[var(--border-color)]"><h2 class="font-bold text-sm">Ticket list columns</h2><p class="text-[11px] text-slate-400 mt-1">Disable, rename, reorder, or add columns without changing code.</p></div><div class="max-h-[480px] overflow-auto divide-y divide-[var(--border-color)]">${columns.map(c => `<div class="p-3 flex items-center justify-between gap-3"><div><div class="text-xs font-bold">${c.label} ${c.enabled ? '' : '<span class="text-amber-600">(hidden)</span>'}</div><div class="text-[10px] text-slate-400">${c.ticket_type} · key: ${c.column_key} · position: ${c.display_order}</div></div><div class="flex gap-2"><button onclick="openColumnModal(${c.id})" class="text-cyan-600 text-[10px] font-bold">Edit</button><button onclick="deleteTicketConfig('columns', ${c.id})" class="text-red-500 text-[10px] font-bold">Remove</button></div></div>`).join('') || '<div class="p-4 text-sm text-slate-400">Add columns to start tailoring a ticket list.</div>'}</div></section></div><div class="p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 text-xs text-slate-500"><b class="text-cyan-600">Tip:</b> Use a stable data key such as <code>business_impact</code> or <code>vendor_reference</code> for a new column. Existing list fields can be hidden or relabeled; custom fields can be recorded on each Application, Project, or Assignment Group from Manage Applications & Teams.</div></div>`;
+    container.innerHTML = `<div class="space-y-6"><div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><h1 class="text-2xl font-black tracking-tight">Ticket Fields & Closure Notes</h1><p class="text-sm text-slate-500">Maintain closure categories and choose the information shown for Incidents, Service Requests, and Change Requests.</p></div><div class="flex gap-2"><button data-click="syncConfigurationToConsul()" class="border border-amber-500 text-amber-600 px-3 py-2 rounded-xl text-xs font-bold">Sync to Consul</button><button data-click="openTaxonomyModal()" class="bg-purple-600 text-white px-3 py-2 rounded-xl text-xs font-bold">+ Closure option</button><button data-click="openColumnModal()" class="bg-cyan-600 text-white px-3 py-2 rounded-xl text-xs font-bold">+ List column</button></div></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-5"><section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden"><div class="p-4 border-b border-[var(--border-color)]"><h2 class="font-bold text-sm">Closure taxonomy</h2><p class="text-[11px] text-slate-400 mt-1">Application-specific options appear alongside the standard closure list.</p></div><div class="max-h-[480px] overflow-auto divide-y divide-[var(--border-color)]">${taxonomy.map(t => `<div class="p-3 flex items-center justify-between gap-3"><div><div class="text-xs font-bold">${t.category} <span class="text-slate-400 font-normal">/ ${t.subcategory}</span></div><div class="text-[10px] text-slate-400">${t.ticket_type} · ${t.application_name}</div></div><div class="flex gap-2"><button data-click="openTaxonomyModal(${t.id})" class="text-purple-600 text-[10px] font-bold">Edit</button><button data-click="deleteTicketConfig('taxonomy', ${t.id})" class="text-red-500 text-[10px] font-bold">Remove</button></div></div>`).join('') || '<div class="p-4 text-sm text-slate-400">No custom closure options yet.</div>'}</div></section><section class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden"><div class="p-4 border-b border-[var(--border-color)]"><h2 class="font-bold text-sm">Ticket list columns</h2><p class="text-[11px] text-slate-400 mt-1">Disable, rename, reorder, or add columns without changing code.</p></div><div class="max-h-[480px] overflow-auto divide-y divide-[var(--border-color)]">${columns.map(c => `<div class="p-3 flex items-center justify-between gap-3"><div><div class="text-xs font-bold">${c.label} ${c.enabled ? '' : '<span class="text-amber-600">(hidden)</span>'}</div><div class="text-[10px] text-slate-400">${c.ticket_type} · key: ${c.column_key} · position: ${c.display_order}</div></div><div class="flex gap-2"><button data-click="openColumnModal(${c.id})" class="text-cyan-600 text-[10px] font-bold">Edit</button><button data-click="deleteTicketConfig('columns', ${c.id})" class="text-red-500 text-[10px] font-bold">Remove</button></div></div>`).join('') || '<div class="p-4 text-sm text-slate-400">Add columns to start tailoring a ticket list.</div>'}</div></section></div><div class="p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 text-xs text-slate-500"><b class="text-cyan-600">Tip:</b> Use a stable data key such as <code>business_impact</code> or <code>vendor_reference</code> for a new column. Existing list fields can be hidden or relabeled; custom fields can be recorded on each Application, Project, or Assignment Group from Manage Applications & Teams.</div></div>`;
   } catch (err) { container.innerHTML = `<div class="p-8 text-center text-red-500">Unable to load ticket configuration: ${err.message}</div>`; }
 }
 
@@ -6481,12 +6621,12 @@ function openTaxonomyModal(itemId = null) {
   const allowedApps = isGlobalAdmin ? apps : apps.filter(a => adminProjects.includes(a.project_name) || adminProjects.includes(a.name));
 
   const item = taxonomy.find(x => x.id === itemId) || {};
-  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">${itemId ? 'Edit' : 'Add'} closure option</h2><button onclick="closeAdminModal()">✕</button></div><form onsubmit="saveTaxonomy(event, ${itemId || 'null'})" class="space-y-3 text-xs admin-form"><label>Ticket type<select id="tax_ticket"><option ${item.ticket_type === 'Incident' ? 'selected' : ''}>Incident</option><option ${item.ticket_type === 'Service Request' ? 'selected' : ''}>Service Request</option><option ${item.ticket_type === 'Change Request' ? 'selected' : ''}>Change Request</option></select></label><label>Closure category<input id="tax_category" required value="${item.category || ''}" placeholder="e.g. Vendor Issue"></label><label>Closure subcategory<input id="tax_subcategory" required value="${item.subcategory || ''}" placeholder="e.g. Awaiting vendor patch"></label><label>Application scope<select id="tax_app">${adminSelectOptions(allowedApps, item.application_id, isGlobalAdmin ? 'All applications' : 'Select application')}</select></label><label class="flex items-center gap-2 font-normal"><input type="checkbox" id="tax_active" ${item.active !== false ? 'checked' : ''}> Available for selection</label><div class="flex justify-end gap-2 pt-3"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">Save</button></div></form></div></div>`;
+  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">${itemId ? 'Edit' : 'Add'} closure option</h2><button data-click="closeAdminModal()">✕</button></div><form data-submit="saveTaxonomy(event, ${itemId || 'null'})" class="space-y-3 text-xs admin-form"><label>Ticket type<select id="tax_ticket"><option ${item.ticket_type === 'Incident' ? 'selected' : ''}>Incident</option><option ${item.ticket_type === 'Service Request' ? 'selected' : ''}>Service Request</option><option ${item.ticket_type === 'Change Request' ? 'selected' : ''}>Change Request</option></select></label><label>Closure category<input id="tax_category" required value="${item.category || ''}" placeholder="e.g. Vendor Issue"></label><label>Closure subcategory<input id="tax_subcategory" required value="${item.subcategory || ''}" placeholder="e.g. Awaiting vendor patch"></label><label>Application scope<select id="tax_app">${adminSelectOptions(allowedApps, item.application_id, isGlobalAdmin ? 'All applications' : 'Select application')}</select></label><label class="flex items-center gap-2 font-normal"><input type="checkbox" id="tax_active" ${item.active !== false ? 'checked' : ''}> Available for selection</label><div class="flex justify-end gap-2 pt-3"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">Save</button></div></form></div></div>`;
 }
 
 function openColumnModal(itemId = null) {
   const item = (state.ticketConfiguration?.columns || []).find(x => x.id === itemId) || {};
-  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">${itemId ? 'Edit' : 'Add'} ticket list column</h2><button onclick="closeAdminModal()">✕</button></div><form onsubmit="saveTicketColumn(event, ${itemId || 'null'})" class="space-y-3 text-xs admin-form"><label>Ticket type<select id="col_ticket"><option ${item.ticket_type === 'Incident' ? 'selected' : ''}>Incident</option><option ${item.ticket_type === 'Service Request' ? 'selected' : ''}>Service Request</option><option ${item.ticket_type === 'Change Request' ? 'selected' : ''}>Change Request</option></select></label><label>Data key<input id="col_key" required value="${item.column_key || ''}" placeholder="vendor_reference"></label><label>Column label<input id="col_label" required value="${item.label || ''}" placeholder="Vendor reference"></label><label>Display position<input id="col_order" type="number" value="${item.display_order || 100}"></label><label class="flex items-center gap-2 font-normal"><input type="checkbox" id="col_enabled" ${item.enabled !== false ? 'checked' : ''}> Show this column</label><div class="flex justify-end gap-2 pt-3"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-cyan-600 text-white rounded-lg font-bold">Save</button></div></form></div></div>`;
+  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">${itemId ? 'Edit' : 'Add'} ticket list column</h2><button data-click="closeAdminModal()">✕</button></div><form data-submit="saveTicketColumn(event, ${itemId || 'null'})" class="space-y-3 text-xs admin-form"><label>Ticket type<select id="col_ticket"><option ${item.ticket_type === 'Incident' ? 'selected' : ''}>Incident</option><option ${item.ticket_type === 'Service Request' ? 'selected' : ''}>Service Request</option><option ${item.ticket_type === 'Change Request' ? 'selected' : ''}>Change Request</option></select></label><label>Data key<input id="col_key" required value="${item.column_key || ''}" placeholder="vendor_reference"></label><label>Column label<input id="col_label" required value="${item.label || ''}" placeholder="Vendor reference"></label><label>Display position<input id="col_order" type="number" value="${item.display_order || 100}"></label><label class="flex items-center gap-2 font-normal"><input type="checkbox" id="col_enabled" ${item.enabled !== false ? 'checked' : ''}> Show this column</label><div class="flex justify-end gap-2 pt-3"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-cyan-600 text-white rounded-lg font-bold">Save</button></div></form></div></div>`;
 }
 
 async function saveTaxonomy(event, itemId) {
@@ -6637,7 +6777,7 @@ async function submitAdminEntity(event, type, entityId = null) {
 }
 
 function openDistributionListModal(groupId, groupName) {
-  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">Add Distribution List</h2><button onclick="closeAdminModal()">✕</button></div><p class="text-xs text-slate-500 mb-3">Assignment group: <b>${groupName}</b></p><form onsubmit="submitDistributionList(event, ${groupId})" class="space-y-3 text-xs admin-form"><label>DL email *<input id="dl_email" type="email" required placeholder="support-team@accenture.com"></label><label>Display name<input id="dl_name" placeholder="Payment Support DL"></label><label>Privilege<select id="dl_privilege"><option value="support">Support team</option><option value="administrator">Administrator</option></select></label><div class="flex justify-end gap-2 pt-3"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold">Add DL</button></div></form></div></div>`;
+  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-md rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><h2 class="font-bold">Add Distribution List</h2><button data-click="closeAdminModal()">✕</button></div><p class="text-xs text-slate-500 mb-3">Assignment group: <b>${groupName}</b></p><form data-submit="submitDistributionList(event, ${groupId})" class="space-y-3 text-xs admin-form"><label>DL email *<input id="dl_email" type="email" required placeholder="support-team@accenture.com"></label><label>Display name<input id="dl_name" placeholder="Payment Support DL"></label><label>Privilege<select id="dl_privilege"><option value="support">Support team</option><option value="administrator">Administrator</option></select></label><div class="flex justify-end gap-2 pt-3"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold">Add DL</button></div></form></div></div>`;
 }
 
 async function submitDistributionList(event, groupId) {
@@ -6664,7 +6804,7 @@ async function renderVisualConfigGraph(container) {
             <h1 class="text-2xl font-black tracking-tight">Visual Configuration Hierarchy Graph</h1>
             <p class="text-sm text-slate-500">Interactive relationship tree: Application ↓ Project ↓ Routing Rules ↓ Assignment Group ↓ SLA Policy</p>
           </div>
-          <button onclick="renderVisualConfigGraph(document.getElementById('mainApp'))" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-xs font-semibold flex items-center space-x-1.5">
+          <button data-click="renderVisualConfigGraphMain()" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-xs font-semibold flex items-center space-x-1.5">
             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
             <span>Refresh Graph</span>
           </button>
@@ -6688,7 +6828,7 @@ async function renderVisualConfigGraph(container) {
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] space-y-3">
               <div class="font-bold text-xs uppercase tracking-wider text-purple-600">Applications (${graphData.nodes.filter(n=>n.type==='application').length})</div>
               ${graphData.nodes.filter(n => n.type === 'application').map(n => `
-                <div onclick="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-purple-500 cursor-pointer text-xs transition-all">
+                <div data-click="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-purple-500 cursor-pointer text-xs transition-all">
                   <div class="font-bold text-[var(--text-primary)]">${n.label}</div>
                   <div class="text-[10px] text-slate-400 mt-0.5">${n.subtitle}</div>
                 </div>
@@ -6699,7 +6839,7 @@ async function renderVisualConfigGraph(container) {
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] space-y-3">
               <div class="font-bold text-xs uppercase tracking-wider text-indigo-600">Projects (${graphData.nodes.filter(n=>n.type==='project').length})</div>
               ${graphData.nodes.filter(n => n.type === 'project').map(n => `
-                <div onclick="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-indigo-500 cursor-pointer text-xs transition-all">
+                <div data-click="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-indigo-500 cursor-pointer text-xs transition-all">
                   <div class="font-bold text-[var(--text-primary)]">${n.label}</div>
                   <div class="text-[10px] text-slate-400 mt-0.5">${n.subtitle}</div>
                 </div>
@@ -6710,7 +6850,7 @@ async function renderVisualConfigGraph(container) {
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] space-y-3">
               <div class="font-bold text-xs uppercase tracking-wider text-amber-600">Routing Rules (${graphData.nodes.filter(n=>n.type==='routing_rule').length})</div>
               ${graphData.nodes.filter(n => n.type === 'routing_rule').map(n => `
-                <div onclick="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-amber-500 cursor-pointer text-xs transition-all">
+                <div data-click="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-amber-500 cursor-pointer text-xs transition-all">
                   <div class="font-bold text-[var(--text-primary)]">${n.label}</div>
                   <div class="text-[10px] text-slate-400 mt-0.5">${n.subtitle}</div>
                 </div>
@@ -6721,7 +6861,7 @@ async function renderVisualConfigGraph(container) {
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] space-y-3">
               <div class="font-bold text-xs uppercase tracking-wider text-emerald-600">Support Teams (${graphData.nodes.filter(n=>n.type==='group').length})</div>
               ${graphData.nodes.filter(n => n.type === 'group').map(n => `
-                <div onclick="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-emerald-500 cursor-pointer text-xs transition-all">
+                <div data-click="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-emerald-500 cursor-pointer text-xs transition-all">
                   <div class="font-bold text-[var(--text-primary)]">${n.label}</div>
                   <div class="text-[10px] text-slate-400 mt-0.5">${n.subtitle}</div>
                 </div>
@@ -6732,7 +6872,7 @@ async function renderVisualConfigGraph(container) {
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] space-y-3">
               <div class="font-bold text-xs uppercase tracking-wider text-purple-600">SLA Policies (${graphData.nodes.filter(n=>n.type==='sla_policy').length})</div>
               ${graphData.nodes.filter(n => n.type === 'sla_policy').map(n => `
-                <div onclick="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-purple-500 cursor-pointer text-xs transition-all">
+                <div data-click="showNodeDetails(${JSON.stringify(n).replace(/"/g, '&quot;')})" class="p-3 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm hover:border-purple-500 cursor-pointer text-xs transition-all">
                   <div class="font-bold text-[var(--text-primary)]">${n.label}</div>
                   <div class="text-[10px] text-slate-400 mt-0.5">${n.subtitle}</div>
                 </div>
@@ -6761,7 +6901,7 @@ function showNodeDetails(node) {
         <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500 text-white">${node.type}</span>
         <span class="text-base font-bold">${node.label}</span>
       </div>
-      <button onclick="document.getElementById('nodeDetailBox').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+      <button data-click="closeNodeDetailBox()" class="text-slate-400 hover:text-white">✕</button>
     </div>
     <pre class="p-3 rounded-xl bg-[var(--bg-tertiary)] text-xs overflow-x-auto font-mono text-[var(--text-primary)]">${JSON.stringify(node.details, null, 2)}</pre>
   `;
@@ -6788,7 +6928,7 @@ async function renderRoutingSimulatorView(container) {
 
           <div>
             <label class="block text-xs font-semibold text-slate-400 mb-1">Application</label>
-            <select id="sim_app" onchange="filterSimProjects()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2 text-xs">
+            <select id="sim_app" data-change="filterSimProjects()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2 text-xs">
               <option value="">Select Application...</option>
               ${apps.map(a => `<option value="${a.id}">${a.name}</option>`).join('')}
             </select>
@@ -6834,7 +6974,7 @@ async function renderRoutingSimulatorView(container) {
             </div>
           </div>
 
-          <button onclick="executeSimulation()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow flex items-center justify-center space-x-2">
+          <button data-click="executeSimulation()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs shadow flex items-center justify-center space-x-2">
             <i data-lucide="play" class="w-4 h-4"></i>
             <span>Run Simulation</span>
           </button>
@@ -6966,7 +7106,7 @@ async function renderConfigValidationView(container) {
             <h1 class="text-2xl font-black tracking-tight">Configuration Integrity & Validation</h1>
             <p class="text-sm text-slate-500">Automatic scanner detecting missing SLAs, orphaned projects, conflicting routing rules, and expired policies.</p>
           </div>
-          <button onclick="renderConfigValidationView(document.getElementById('mainApp'))" class="px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-semibold">
+          <button data-click="renderConfigValidationViewMain()" class="px-4 py-2 rounded-xl bg-purple-600 text-white text-xs font-semibold">
             Re-scan System
           </button>
         </div>
@@ -7710,7 +7850,7 @@ async function renderCalendarsAdminView(container) {
           <div class="p-5 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm space-y-3">
             <div class="flex items-center justify-between">
               <span class="font-bold text-sm text-[var(--text-primary)]">${c.name}</span>
-              <div class="flex items-center gap-2"><span class="px-2 py-0.5 rounded bg-purple-50 dark:bg-blue-950/40 text-purple-600 text-[10px] font-bold">${c.timezone}</span><button onclick='openCalendarModal(${JSON.stringify(c).replace(/'/g, "&#39;")})' class="text-purple-600 text-[10px] font-bold">Edit</button></div>
+              <div class="flex items-center gap-2"><span class="px-2 py-0.5 rounded bg-purple-50 dark:bg-blue-950/40 text-purple-600 text-[10px] font-bold">${c.timezone}</span><button data-click='openCalendarModal(${JSON.stringify(c).replace(/'/g, "&#39;")})' class="text-purple-600 text-[10px] font-bold">Edit</button></div>
             </div>
             <p class="text-xs text-slate-400">${c.description}</p>
             <div class="p-3 rounded-xl bg-[var(--bg-tertiary)] text-xs space-y-1">
@@ -7728,7 +7868,7 @@ async function renderCalendarsAdminView(container) {
 function openCalendarModal(calendar) {
   const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const zones = ['Asia/Kolkata','UTC','America/New_York','America/Chicago','America/Los_Angeles','Europe/London','Europe/Berlin','Asia/Singapore','Asia/Tokyo','Australia/Sydney'];
-  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-lg rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><div><h2 class="font-bold">Edit working calendar</h2><p class="text-[11px] text-slate-400">Set local operating hours and the timezone used for SLA calculations.</p></div><button onclick="closeAdminModal()">✕</button></div><form onsubmit="saveCalendar(event, ${calendar.id})" class="grid grid-cols-2 gap-3 text-xs admin-form"><label class="col-span-2">Name<input id="cal_name" required value="${calendar.name}"></label><label>Timezone<select id="cal_timezone">${zones.map(z => `<option ${z === calendar.timezone ? 'selected' : ''}>${z}</option>`).join('')}</select></label><label>Working days<div class="flex flex-wrap gap-2 pt-2">${days.map((d,i) => `<label class="flex items-center gap-1 font-normal"><input type="checkbox" class="cal-day" value="${i+1}" ${calendar.working_days.includes(i+1) ? 'checked' : ''}>${d}</label>`).join('')}</div></label><label>Start time<input id="cal_start" type="time" value="${calendar.working_hours_start}"></label><label>End time<input id="cal_end" type="time" value="${calendar.working_hours_end}"></label><label class="col-span-2">Description<textarea id="cal_description" rows="2">${calendar.description || ''}</textarea></label><label class="col-span-2">Holidays (one YYYY-MM-DD date per line)<textarea id="cal_holidays" rows="3">${(calendar.holidays || []).join('\n')}</textarea></label><div class="col-span-2 flex justify-end gap-2 pt-3"><button type="button" onclick="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">Save calendar</button></div></form></div></div>`;
+  document.getElementById('modalContainer').innerHTML = `<div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div class="w-full max-w-lg rounded-2xl bg-[var(--card-bg)] p-5 shadow-2xl"><div class="flex justify-between mb-4"><div><h2 class="font-bold">Edit working calendar</h2><p class="text-[11px] text-slate-400">Set local operating hours and the timezone used for SLA calculations.</p></div><button data-click="closeAdminModal()">✕</button></div><form data-submit="saveCalendar(event, ${calendar.id})" class="grid grid-cols-2 gap-3 text-xs admin-form"><label class="col-span-2">Name<input id="cal_name" required value="${calendar.name}"></label><label>Timezone<select id="cal_timezone">${zones.map(z => `<option ${z === calendar.timezone ? 'selected' : ''}>${z}</option>`).join('')}</select></label><label>Working days<div class="flex flex-wrap gap-2 pt-2">${days.map((d,i) => `<label class="flex items-center gap-1 font-normal"><input type="checkbox" class="cal-day" value="${i+1}" ${calendar.working_days.includes(i+1) ? 'checked' : ''}>${d}</label>`).join('')}</div></label><label>Start time<input id="cal_start" type="time" value="${calendar.working_hours_start}"></label><label>End time<input id="cal_end" type="time" value="${calendar.working_hours_end}"></label><label class="col-span-2">Description<textarea id="cal_description" rows="2">${calendar.description || ''}</textarea></label><label class="col-span-2">Holidays (one YYYY-MM-DD date per line)<textarea id="cal_holidays" rows="3">${(calendar.holidays || []).join('\n')}</textarea></label><div class="col-span-2 flex justify-end gap-2 pt-3"><button type="button" data-click="closeAdminModal()" class="px-4 py-2 border rounded-lg">Cancel</button><button class="px-4 py-2 bg-purple-600 text-white rounded-lg font-bold">Save calendar</button></div></form></div></div>`;
 }
 
 async function saveCalendar(event, calendarId) {
@@ -7795,11 +7935,11 @@ async function renderAiAdminView(container) {
             <p class="text-sm text-slate-500">Configure internal ChatCompletion API integration, verify Knowledge Management connectivity, and monitor copilot utilization.</p>
           </div>
           <div class="flex items-center space-x-2">
-            <button onclick="renderAiAdminView(document.getElementById('mainApp'))" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm">
+            <button data-click="renderAiAdminViewMain()" class="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] text-xs font-semibold flex items-center space-x-1.5 shadow-sm">
               <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-slate-400"></i>
               <span>Refresh</span>
             </button>
-            <button onclick="testAiConnectionLive()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow flex items-center space-x-1.5">
+            <button data-click="testAiConnectionLive()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow flex items-center space-x-1.5">
               <i data-lucide="activity" class="w-3.5 h-3.5"></i>
               <span>Test Connection</span>
             </button>
@@ -7897,7 +8037,7 @@ async function renderAiAdminView(container) {
                 <span>PII & Secret Filtering</span>
               </label>
             </div>
-            <button onclick="saveAiConfig()" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow">
+            <button data-click="saveAiConfig()" class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow">
               Save AI Settings
             </button>
           </div>
@@ -8019,7 +8159,7 @@ async function renderAiAssistantFullScreen(container) {
       <!-- Conversation History Sidebar -->
       <div class="w-72 border-r border-[var(--border-color)] bg-[var(--bg-tertiary)] flex flex-col justify-between">
         <div class="p-3 border-b border-[var(--border-color)]">
-          <button onclick="startNewFullScreenChat()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow">
+          <button data-click="startNewFullScreenChat()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow">
             <i data-lucide="plus" class="w-3.5 h-3.5"></i>
             <span>New Chat</span>
           </button>
@@ -8042,7 +8182,7 @@ async function renderAiAssistantFullScreen(container) {
 
         <!-- Chat Input Form -->
         <div class="p-4 border-t border-[var(--border-color)]">
-          <form onsubmit="submitFullScreenAiQuestion(event)" class="flex items-center space-x-2">
+          <form data-submit="submitFullScreenAiQuestion(event)" class="flex items-center space-x-2">
             <input
               type="text"
               id="fullAiInput"
@@ -8073,7 +8213,7 @@ async function loadAiConversationsList() {
     const convs = await res.json();
     if (!Array.isArray(convs)) return;
     container.innerHTML = convs.map(c => `
-      <div onclick="selectAiConversation('${c.id}')" class="p-2.5 rounded-lg hover:bg-[var(--card-bg)] cursor-pointer truncate font-medium ${state.activeAiConversationId === c.id ? 'bg-[var(--card-bg)] text-purple-600 font-bold' : 'text-slate-400'}">
+      <div data-click="selectAiConversation('${c.id}')" class="p-2.5 rounded-lg hover:bg-[var(--card-bg)] cursor-pointer truncate font-medium ${state.activeAiConversationId === c.id ? 'bg-[var(--card-bg)] text-purple-600 font-bold' : 'text-slate-400'}">
         ${c.title}
       </div>
     `).join('');
@@ -8343,19 +8483,19 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
             <i data-lucide="plus-circle" class="w-5 h-5 text-purple-600"></i>
             <h2 id="modalCreateTitle" class="text-base font-bold">Create New Ticket</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
         </div>
 
         <!-- Ticket Type Tabs (Incident, Service Request, Change Request) -->
         <div class="px-5 pt-4 pb-1 shrink-0">
           <div class="flex items-center p-1 bg-[var(--bg-tertiary)] rounded-xl border border-[var(--border-color)] space-x-1">
-            <button type="button" onclick="switchModalTicketType('Incident')" id="tabTypeIncident" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow flex items-center justify-center space-x-1.5">
+            <button type="button" data-click="switchModalTicketType('Incident')" id="tabTypeIncident" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow flex items-center justify-center space-x-1.5">
               <span>⚡ Incident</span>
             </button>
-            <button type="button" onclick="switchModalTicketType('Service Request')" id="tabTypeRequest" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center justify-center space-x-1.5">
+            <button type="button" data-click="switchModalTicketType('Service Request')" id="tabTypeRequest" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center justify-center space-x-1.5">
               <span>📦 Service Request</span>
             </button>
-            <button type="button" onclick="switchModalTicketType('Change Request')" id="tabTypeChange" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center justify-center space-x-1.5">
+            <button type="button" data-click="switchModalTicketType('Change Request')" id="tabTypeChange" class="flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-[var(--text-secondary)] hover:text-[var(--text-primary)] flex items-center justify-center space-x-1.5">
               <span>🔄 Change Request</span>
             </button>
           </div>
@@ -8364,12 +8504,12 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
           </div>
         </div>
 
-        <form onsubmit="submitNewTicket(event)" class="p-5 space-y-3.5 text-xs overflow-y-auto flex-1">
+        <form data-submit="submitNewTicket(event)" class="p-5 space-y-3.5 text-xs overflow-y-auto flex-1">
           <!-- Common: Project & Application -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block font-semibold text-slate-400 mb-1">Project *</label>
-              <select id="modal_proj" required onchange="filterModalAppsAndGroups()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+              <select id="modal_proj" required data-change="filterModalAppsAndGroups()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
                 <option value="">Select Project...</option>
                 ${projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
               </select>
@@ -8377,7 +8517,7 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
 
             <div>
               <label class="block font-semibold text-slate-400 mb-1">Application *</label>
-              <select id="modal_app" required disabled onchange="filterModalGroupsForApp()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+              <select id="modal_app" required disabled data-change="filterModalGroupsForApp()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
                 <option value="">Select a Project first...</option>
               </select>
             </div>
@@ -8408,7 +8548,7 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label class="block font-semibold text-slate-400 mb-1">Assignment Group (Scoped to Project & Application)</label>
-                  <select id="modal_assignment_group" onchange="onModalGroupChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+                  <select id="modal_assignment_group" data-change="onModalGroupChange()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
                     <option value="">Auto-Route to Frontline</option>
                   </select>
                 </div>
@@ -8541,7 +8681,7 @@ async function openCreateModal(initialType = 'Incident', initialCatalogItem = nu
           <div class="pt-3 border-t border-[var(--border-color)] flex items-center justify-between shrink-0">
             <span id="modalTypeBadgeFooter" class="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">Type: Incident</span>
             <div class="flex items-center space-x-2">
-              <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-lg border border-[var(--border-color)] text-xs font-semibold">Cancel</button>
+              <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-lg border border-[var(--border-color)] text-xs font-semibold">Cancel</button>
               <button type="submit" id="modalSubmitBtn" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow">Submit Incident</button>
             </div>
           </div>
@@ -8954,7 +9094,7 @@ async function submitNewTicket(e) {
       });
       if (res.ok) {
         const inc = await res.json();
-        document.getElementById('modalContainer').innerHTML = '';
+        closeModalContainer();
         window.location.hash = `#/incidents/${inc.number}`;
       } else {
         const err = await res.json();
@@ -8980,7 +9120,7 @@ async function submitNewTicket(e) {
       });
       if (res.ok) {
         const req = await res.json();
-        document.getElementById('modalContainer').innerHTML = '';
+        closeModalContainer();
         window.location.hash = `#/service-requests/${req.number}`;
       } else {
         const err = await res.json();
@@ -9015,7 +9155,7 @@ async function submitNewTicket(e) {
       });
       if (res.ok) {
         const chg = await res.json();
-        document.getElementById('modalContainer').innerHTML = '';
+        closeModalContainer();
         window.location.hash = `#/changes/${chg.number}`;
       } else {
         const err = await res.json();
@@ -9137,14 +9277,14 @@ async function openResolveModal(ticketId) {
             <i data-lucide="check-circle" class="w-5 h-5 text-emerald-500"></i>
             <h2 class="text-base font-bold">Resolve & Categorize Incident</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
-        <form onsubmit="confirmResolve(event, ${ticketId})" class="p-5 space-y-3.5 text-xs">
+        <form data-submit="confirmResolve(event, ${ticketId})" class="p-5 space-y-3.5 text-xs">
           <!-- Impacted Application -->
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Impacted Application *</label>
-            <select id="res_app" required onchange="updateResolveSubcategories()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs">
+            <select id="res_app" required data-change="updateResolveSubcategories()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs">
               ${apps.map(a => `<option value="${a.name}" ${a.name === currentAppName ? 'selected' : ''}>${a.name}</option>`).join('')}
             </select>
           </div>
@@ -9152,7 +9292,7 @@ async function openResolveModal(ticketId) {
           <!-- Root Cause Category -->
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Root Cause / Closure Category *</label>
-            <select id="res_close_category" required onchange="updateResolveSubcategories()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold text-purple-600 dark:text-purple-400">
+            <select id="res_close_category" required data-change="updateResolveSubcategories()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold text-purple-600 dark:text-purple-400">
               <option value="Bug">Bug (Software Defect)</option>
               <option value="Configuration Issue">Configuration Issue</option>
               <option value="Application Limitation">Application Limitation</option>
@@ -9198,7 +9338,7 @@ async function openResolveModal(ticketId) {
           </div>
 
           <div class="pt-3 border-t border-[var(--border-color)] flex justify-end space-x-2">
-            <button type="button" onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 rounded-lg border text-xs font-semibold">Cancel</button>
+            <button type="button" data-click="closeModalContainer()" class="px-4 py-2 rounded-lg border text-xs font-semibold">Cancel</button>
             <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow flex items-center space-x-1.5">
               <i data-lucide="check" class="w-4 h-4"></i>
               <span>Confirm & Mark Resolved</span>
@@ -9271,7 +9411,7 @@ async function confirmResolve(event, ticketId) {
       })
     });
     if (res.ok) {
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
       renderIncidentDetailView(document.getElementById('mainApp'), state.routeParams.id);
     } else {
       const err = await res.json();
@@ -9323,13 +9463,13 @@ function openExportModal(ticketType = 'incidents') {
             <i data-lucide="download" class="w-5 h-5 text-purple-600"></i>
             <h2 class="text-base font-bold">Export ${label}</h2>
           </div>
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="text-slate-400 hover:text-white">✕</button>
+          <button data-click="closeModalContainer()" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
         <div class="space-y-3.5 text-xs overflow-y-auto flex-1 pr-1">
           <div>
             <label class="block font-semibold text-slate-400 mb-1">Time Period *</label>
-            <select id="export_time_period" onchange="toggleCustomDateInputs()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
+            <select id="export_time_period" data-change="toggleCustomDateInputs()" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-2.5 text-xs font-semibold">
               <option value="today" ${prefillPeriod === 'today' ? 'selected' : ''}>Today</option>
               <option value="7d" ${prefillPeriod === '7d' ? 'selected' : ''}>Last 7 Days</option>
               <option value="30d" ${prefillPeriod === '30d' ? 'selected' : ''}>Last 30 Days</option>
@@ -9370,9 +9510,9 @@ function openExportModal(ticketType = 'incidents') {
             <div class="flex items-center justify-between">
               <label class="block font-bold text-slate-400">Select Export Columns</label>
               <div class="space-x-2">
-                <button type="button" onclick="toggleAllExportColumns(true)" class="text-[11px] font-bold text-purple-600 hover:underline">Select All</button>
+                <button type="button" data-click="toggleAllExportColumns(true)" class="text-[11px] font-bold text-purple-600 hover:underline">Select All</button>
                 <span class="text-slate-500">|</span>
-                <button type="button" onclick="toggleAllExportColumns(false)" class="text-[11px] font-bold text-slate-400 hover:underline">Clear All</button>
+                <button type="button" data-click="toggleAllExportColumns(false)" class="text-[11px] font-bold text-slate-400 hover:underline">Clear All</button>
               </div>
             </div>
             <div class="grid grid-cols-2 gap-2 p-3 rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] max-h-48 overflow-y-auto">
@@ -9391,8 +9531,8 @@ function openExportModal(ticketType = 'incidents') {
         </div>
 
         <div class="flex justify-end space-x-2 pt-3 border-t border-[var(--border-color)] shrink-0">
-          <button onclick="document.getElementById('modalContainer').innerHTML=''" class="px-4 py-2 border rounded-lg text-xs font-semibold">Cancel</button>
-          <button onclick="triggerDownload('${ticketType}')" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow flex items-center space-x-1.5">
+          <button data-click="closeModalContainer()" class="px-4 py-2 border rounded-lg text-xs font-semibold">Cancel</button>
+          <button data-click="triggerDownload('${ticketType}')" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-2 rounded-lg text-xs font-bold shadow flex items-center space-x-1.5">
             <i data-lucide="download" class="w-4 h-4"></i>
             <span>Download Export</span>
           </button>
@@ -9448,7 +9588,7 @@ function triggerDownload(ticketType) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      document.getElementById('modalContainer').innerHTML = '';
+      closeModalContainer();
     })
     .catch(err => alert('Export Error: ' + err.message));
 }
@@ -9475,11 +9615,11 @@ async function renderAnalyticsDashboardView(container) {
 
         <!-- Tab Toggle -->
         <div class="flex bg-[var(--bg-tertiary)] p-1 rounded-xl border border-[var(--border-color)] text-xs font-semibold self-start">
-          <button onclick="switchAnalyticsTab('live')" id="tab_btn_live" class="px-4 py-2 rounded-lg ${activeAnalyticsTab === 'live' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all flex items-center space-x-1.5">
+          <button data-click="switchAnalyticsTab('live')" id="tab_btn_live" class="px-4 py-2 rounded-lg ${activeAnalyticsTab === 'live' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all flex items-center space-x-1.5">
             <i data-lucide="activity" class="w-4 h-4"></i>
             <span>Live System Metrics</span>
           </button>
-          <button onclick="switchAnalyticsTab('import')" id="tab_btn_import" class="px-4 py-2 rounded-lg ${activeAnalyticsTab === 'import' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all flex items-center space-x-1.5">
+          <button data-click="switchAnalyticsTab('import')" id="tab_btn_import" class="px-4 py-2 rounded-lg ${activeAnalyticsTab === 'import' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all flex items-center space-x-1.5">
             <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
             <span>Import & Visualize CSV / Excel</span>
           </button>
@@ -9530,7 +9670,7 @@ async function loadLiveAnalytics() {
             <span class="font-semibold text-slate-400">Time Range:</span>
             <div class="inline-flex rounded-xl bg-[var(--bg-tertiary)] p-1 border border-[var(--border-color)]">
               ${['7d', '30d', '90d', '1y', 'all', 'custom'].map(p => `
-                <button onclick="setAnalyticsPeriod('${p}')" class="px-3 py-1 rounded-lg text-xs font-semibold ${currentAnalyticsPeriod === p ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all">
+                <button data-click="setAnalyticsPeriod('${p}')" class="px-3 py-1 rounded-lg text-xs font-semibold ${currentAnalyticsPeriod === p ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-[var(--text-primary)]'} transition-all">
                   ${p === '7d' ? '7 Days' : (p === '30d' ? '30 Days' : (p === '90d' ? '90 Days' : (p === '1y' ? '1 Year' : (p === 'custom' ? 'Custom Range' : 'All Time'))))}
                 </button>
               `).join('')}
@@ -9546,7 +9686,7 @@ async function loadLiveAnalytics() {
                 <span class="text-[11px] text-slate-400 font-semibold">To:</span>
                 <input type="date" id="analytics_end_date" value="${currentAnalyticsEndDate}" class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-lg px-2 py-0.5 text-xs text-[var(--text-primary)] font-medium focus:outline-none focus:border-purple-500">
               </div>
-              <button onclick="applyCustomAnalyticsDateRange()" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-2.5 py-1 rounded-lg text-xs transition-colors flex items-center gap-1 shadow-sm">
+              <button data-click="applyCustomAnalyticsDateRange()" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-2.5 py-1 rounded-lg text-xs transition-colors flex items-center gap-1 shadow-sm">
                 <i data-lucide="filter" class="w-3 h-3"></i>
                 <span>Apply</span>
               </button>
@@ -9558,7 +9698,7 @@ async function loadLiveAnalytics() {
             ` : ''}
           </div>
           <div class="flex items-center space-x-2">
-            <button onclick="openExportModal('incidents')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] font-semibold flex items-center space-x-1.5 text-purple-600 dark:text-purple-300">
+            <button data-click="openExportModal('incidents')" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] font-semibold flex items-center space-x-1.5 text-purple-600 dark:text-purple-300">
               <i data-lucide="download" class="w-3.5 h-3.5"></i>
               <span>Export Incident Dataset</span>
             </button>
@@ -9875,7 +10015,7 @@ function renderImportVisualizer() {
     <div class="space-y-6 animate-fade-in">
       <!-- File Upload Zone -->
       <div class="p-8 rounded-2xl bg-[var(--card-bg)] border-2 border-dashed border-[var(--border-color)] hover:border-purple-500 transition-colors text-center shadow-sm">
-        <input type="file" id="csvFileInput" accept=".csv,.txt,.xlsx,.xls" onchange="handleFileSelected(event)" class="hidden">
+        <input type="file" id="csvFileInput" accept=".csv,.txt,.xlsx,.xls" data-change="handleFileSelected(event)" class="hidden">
         <div class="max-w-md mx-auto space-y-3">
           <div class="w-14 h-14 rounded-2xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 flex items-center justify-center mx-auto shadow-inner">
             <i data-lucide="upload-cloud" class="w-7 h-7"></i>
@@ -9885,11 +10025,11 @@ function renderImportVisualizer() {
             <p class="text-xs text-slate-400 mt-1">Upload any CSV or Excel file exported from this platform or external ticketing systems.</p>
           </div>
           <div class="flex items-center justify-center gap-3 pt-2">
-            <button onclick="document.getElementById('csvFileInput').click()" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
+            <button data-click="triggerCsvFileInput()" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
               <i data-lucide="file-plus" class="w-4 h-4"></i>
               <span>Choose CSV / Excel File</span>
             </button>
-            <button onclick="loadSampleImportData()" class="px-4 py-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] text-xs font-semibold text-purple-600 dark:text-purple-300 flex items-center space-x-1.5">
+            <button data-click="loadSampleImportData()" class="px-4 py-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] text-xs font-semibold text-purple-600 dark:text-purple-300 flex items-center space-x-1.5">
               <i data-lucide="sparkles" class="w-4 h-4 text-purple-500"></i>
               <span>Load Sample ITSM Dataset</span>
             </button>
@@ -10045,7 +10185,7 @@ function processAndVisualizeCSV(content, filename) {
           <div class="text-slate-400 text-[11px]">${total} Rows successfully parsed & visualized below</div>
         </div>
       </div>
-      <button onclick="renderImportVisualizer()" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] font-semibold text-slate-300">
+      <button data-click="renderImportVisualizer()" class="px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-tertiary)] hover:bg-[var(--card-bg)] font-semibold text-slate-300">
         Upload Another File
       </button>
     </div>
@@ -10116,7 +10256,7 @@ function processAndVisualizeCSV(content, filename) {
           <i data-lucide="table" class="w-4 h-4 text-purple-600"></i>
           <h3 class="font-bold text-xs">Imported Records Preview (${records.length} items)</h3>
         </div>
-        <input type="text" id="tableFilterInput" onkeyup="filterImportedTable()" placeholder="Search imported rows..." class="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg px-3 py-1.5 text-xs">
+        <input type="text" id="tableFilterInput" data-keyup="filterImportedTable()" placeholder="Search imported rows..." class="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg px-3 py-1.5 text-xs">
       </div>
       <div class="overflow-x-auto max-h-96 overflow-y-auto">
         <table id="importedDataTable" class="w-full text-left text-xs">
@@ -10326,22 +10466,22 @@ async function renderIdentityManagementView(container) {
 
       <!-- Navigation Tabs -->
       <div class="flex space-x-1 border-b border-[var(--border-color)]">
-        <button onclick="switchIdentityTab('users')" id="tabBtn-users" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'users' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
+        <button data-click="switchIdentityTab('users')" id="tabBtn-users" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'users' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
           <i data-lucide="users" class="w-4 h-4"></i>
           <span>Local Users & Admin</span>
           <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${users.length}</span>
         </button>
-        <button onclick="switchIdentityTab('groups')" id="tabBtn-groups" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'groups' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
+        <button data-click="switchIdentityTab('groups')" id="tabBtn-groups" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'groups' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
           <i data-lucide="shield" class="w-4 h-4"></i>
           <span>Roles & Custom Groups</span>
           <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${customGroups.length}</span>
         </button>
-        <button onclick="switchIdentityTab('ad')" id="tabBtn-ad" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'ad' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
+        <button data-click="switchIdentityTab('ad')" id="tabBtn-ad" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'ad' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
           <i data-lucide="network" class="w-4 h-4"></i>
           <span>Active Directory Mappings</span>
           <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${adMappings.length}</span>
         </button>
-        <button onclick="switchIdentityTab('sso')" id="tabBtn-sso" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'sso' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
+        <button data-click="switchIdentityTab('sso')" id="tabBtn-sso" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'sso' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
           <i data-lucide="key" class="w-4 h-4"></i>
           <span>Enterprise SSO & SAML Metadata</span>
         </button>
@@ -10371,7 +10511,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <div class="text-xs text-slate-500">Local user accounts managed directly in the platform, including the bootstrapped fixed administrator (<b>admin</b>).</div>
-          <button onclick="openCreateLocalUserModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+          <button data-click="openCreateLocalUserModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
             <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
             <span>+ Add Local User</span>
           </button>
@@ -10418,7 +10558,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
                       <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${u.active ? 'text-emerald-600' : 'text-slate-400'}">${u.active ? '● Active' : '○ Inactive'}</span>
                     </td>
                     <td class="p-3.5 text-right space-x-2">
-                      <button onclick="openEditLocalUserModal(${u.id}, '${u.username}', '${u.full_name}', '${u.email}', '${u.role}')" class="text-purple-600 hover:text-purple-700 font-bold text-xs">Edit</button>
+                      <button data-click="openEditLocalUserModal(${u.id}, '${u.username}', '${u.full_name}', '${u.email}', '${u.role}')" class="text-purple-600 hover:text-purple-700 font-bold text-xs">Edit</button>
                     </td>
                   </tr>
                 `).join('')}
@@ -10463,7 +10603,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
               <h3 class="font-bold text-sm">Custom Security Groups & Tailored Permissions</h3>
               <p class="text-xs text-slate-500">Create custom groups with granular permissions of your choice.</p>
             </div>
-            <button onclick="openCreateCustomGroupModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+            <button data-click="openCreateCustomGroupModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
               <i data-lucide="plus" class="w-3.5 h-3.5"></i>
               <span>+ Add Custom Group</span>
             </button>
@@ -10492,7 +10632,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
                       </div>
                     </td>
                     <td class="p-3.5 text-right space-x-2">
-                      <button onclick="deleteCustomGroup(${g.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
+                      <button data-click="deleteCustomGroup(${g.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
                     </td>
                   </tr>
                 `).join('') || `<tr><td colspan="5" class="p-8 text-center text-slate-400">No custom groups created yet. Click "+ Add Custom Group" to create one.</td></tr>`}
@@ -10510,7 +10650,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
             <h3 class="font-bold text-sm">Active Directory (AD) / LDAP Group Mappings</h3>
             <p class="text-xs text-slate-500">Map enterprise AD group claims to ITSM standard roles and custom groups.</p>
           </div>
-          <button onclick="openCreateADMappingModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+          <button data-click="openCreateADMappingModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
             <i data-lucide="plus" class="w-3.5 h-3.5"></i>
             <span>+ Add AD Mapping</span>
           </button>
@@ -10539,7 +10679,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
                   <td class="p-3.5 font-medium">${m.custom_group_name || '—'}</td>
                   <td class="p-3.5 text-slate-500">${m.description || '—'}</td>
                   <td class="p-3.5 text-right">
-                    <button onclick="deleteADMapping(${m.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
+                    <button data-click="deleteADMapping(${m.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
                   </td>
                 </tr>
               `).join('') || `<tr><td colspan="5" class="p-8 text-center text-slate-400">No AD group mappings defined yet.</td></tr>`}
@@ -10556,7 +10696,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
           <p class="text-[11px] text-slate-500">Type comma-separated AD groups to verify how permissions will be resolved when a user authenticates.</p>
           <div class="flex gap-2">
             <input id="testAdGroupsInput" type="text" placeholder="e.g. CN=ITSM-Admins,OU=Groups,DC=company, CN=Payment-Engineers,OU=Support" class="flex-1 bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-purple-500" />
-            <button onclick="testAdResolution()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Test Resolution</button>
+            <button data-click="testAdResolution()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Test Resolution</button>
           </div>
           <div id="adResolutionResult" class="hidden p-3 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-xs"></div>
         </div>
@@ -10606,7 +10746,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
               </div>
               <p class="text-xs text-slate-400 mt-1">If you already have an App ID in corporate ESO, Keycloak, or Azure AD, register it to instantly pre-configure SP endpoints and claim mapping paths.</p>
             </div>
-            <button onclick="openRegisterESOAppIdModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 whitespace-nowrap">
+            <button data-click="openRegisterESOAppIdModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 whitespace-nowrap">
               <i data-lucide="plus-circle" class="w-4 h-4"></i>
               <span>Register Existing ESO App ID</span>
             </button>
@@ -10620,7 +10760,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
               <h4 class="font-bold text-sm text-[var(--text-primary)]">Live SSO Claim & Group Mapping Sandbox</h4>
               <p class="text-xs text-slate-400">Test how incoming IdP claims (email, name, groups) resolve to Platform Roles, Custom Groups, and ITSM Assignment Queues.</p>
             </div>
-            <button onclick="testClaimAndGroupMapping()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
+            <button data-click="testClaimAndGroupMapping()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
               <i data-lucide="play" class="w-3.5 h-3.5"></i>
               <span>Simulate Mapping</span>
             </button>
@@ -10655,7 +10795,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
               <p class="text-xs text-slate-500">Active SAML 2.0 & OIDC federations with role mapping.</p>
             </div>
             <div class="flex space-x-2">
-              <button onclick="openImportIdPMetadataModal()" class="border border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
+              <button data-click="openImportIdPMetadataModal()" class="border border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
                 <i data-lucide="upload" class="w-3.5 h-3.5"></i>
                 <span>Import IdP Metadata XML</span>
               </button>
@@ -10733,8 +10873,8 @@ function openCreateLocalUserModal() {
           </div>
         </div>
         <div class="flex justify-end space-x-2 pt-2">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitCreateLocalUser()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create User</button>
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitCreateLocalUser()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create User</button>
         </div>
       </div>
     </div>
@@ -10770,8 +10910,8 @@ function openEditLocalUserModal(id, username, fullName, email, role) {
           </div>
         </div>
         <div class="flex justify-end space-x-2 pt-2">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitEditLocalUser(${id})" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Changes</button>
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitEditLocalUser(${id})" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Changes</button>
         </div>
       </div>
     </div>
@@ -10868,8 +11008,8 @@ function openCreateCustomGroupModal() {
           </div>
         </div>
         <div class="flex justify-end space-x-2 pt-2">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitCreateCustomGroup()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create Group</button>
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitCreateCustomGroup()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create Group</button>
         </div>
       </div>
     </div>
@@ -10933,8 +11073,8 @@ function openCreateADMappingModal() {
           </div>
         </div>
         <div class="flex justify-end space-x-2 pt-2">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitCreateADMapping()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Mapping</button>
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitCreateADMapping()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Mapping</button>
         </div>
       </div>
     </div>
@@ -11022,8 +11162,8 @@ function openImportIdPMetadataModal() {
           </div>
         </div>
         <div class="flex justify-end space-x-2 pt-2">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitImportIdPMetadata()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Import & Save</button>
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitImportIdPMetadata()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Import & Save</button>
         </div>
       </div>
     </div>
@@ -11127,8 +11267,8 @@ function openRegisterESOAppIdModal() {
         </div>
 
         <div class="flex justify-end space-x-2 pt-2 border-t border-[var(--border-color)]">
-          <button onclick="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button onclick="submitRegisterESOAppId()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
+          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
+          <button data-click="submitRegisterESOAppId()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
             <i data-lucide="check" class="w-3.5 h-3.5"></i>
             <span>Register Provider</span>
           </button>
@@ -11290,11 +11430,11 @@ async function renderConsulConfigView(container) {
           <p class="text-sm text-slate-500">Centralized Consul KV store integration for Applications, Assignment Groups, DLs, Projects, Closure Taxonomy, and external KM API settings.</p>
         </div>
         <div class="flex space-x-2">
-          <button onclick="triggerConsulSync()" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow">
+          <button data-click="triggerConsulSync()" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow">
             <i data-lucide="refresh-cw" class="w-4 h-4"></i>
             <span>Sync All Config to Consul</span>
           </button>
-          <button onclick="triggerConsulLoad()" class="border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5">
+          <button data-click="triggerConsulLoad()" class="border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5">
             <i data-lucide="download" class="w-4 h-4"></i>
             <span>Load from Consul</span>
           </button>
@@ -11384,7 +11524,7 @@ async function renderConsulConfigView(container) {
               <input id="kmTokenInput" type="password" value="${kmConfig.auth_token || 'consul:kv/nexus-itsm/km#token'}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 font-mono text-[11px] tracking-widest" />
             </div>
             <div class="pt-2">
-              <button onclick="saveKMConsulConfig()" class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2.5 rounded-xl font-bold text-xs shadow">Save KM Configuration & Sync to Consul</button>
+              <button data-click="saveKMConsulConfig()" class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2.5 rounded-xl font-bold text-xs shadow">Save KM Configuration & Sync to Consul</button>
             </div>
           </div>
         </div>
@@ -11405,7 +11545,7 @@ async function renderConsulConfigView(container) {
                 <option value="WARNING" ${currentLogLevel === 'WARNING' ? 'selected' : ''}>WARNING</option>
                 <option value="ERROR" ${currentLogLevel === 'ERROR' ? 'selected' : ''}>ERROR</option>
               </select>
-              <button onclick="updateSystemLogLevel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Apply Log Level</button>
+              <button data-click="updateSystemLogLevel()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Apply Log Level</button>
             </div>
           </div>
 
@@ -11514,3 +11654,10 @@ async function updateSystemLogLevel() {
   alert(`System log level successfully switched to ${level} on all containers!`);
 }
 
+
+function navigateToTicketsView() {
+  window.location.hash = '#/tickets';
+  if (typeof renderUnifiedTicketsView === 'function') {
+    renderUnifiedTicketsView(document.getElementById('mainApp'));
+  }
+}

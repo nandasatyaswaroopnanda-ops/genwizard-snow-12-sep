@@ -15,23 +15,83 @@
   document.head.appendChild(b);
 })();
 
-// 2. Early SSO User Detection & Immediate Header Population (prevents "Admin User" flash)
+// 2. Early SSO User Detection & Immediate Header Population (prevents wrong user flash)
 (function initEarlyUserInfo() {
   try {
-    var raw = localStorage.getItem('sso_user') || localStorage.getItem('current_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo');
-    if (raw) {
-      var u = JSON.parse(raw);
-      if (u && (u.full_name || u.name || u.username)) {
-        var displayName = u.full_name || u.name || (u.username ? u.username.replace('.', ' ') : 'User');
-        document.addEventListener('DOMContentLoaded', function() {
-          var nameEl = document.getElementById('userName');
-          var avatarEl = document.getElementById('userAvatar');
-          if (nameEl && displayName) nameEl.textContent = displayName;
-          if (avatarEl && displayName) {
-            var initials = displayName.split(' ').filter(Boolean).map(function(s) { return s[0]; }).join('').toUpperCase().slice(0, 2) || 'U';
-            avatarEl.textContent = initials;
+    var u = null;
+
+    // Check query parameters: ?username=... or ?user=...
+    if (typeof window !== 'undefined' && window.location && window.location.search) {
+      var sp = new URLSearchParams(window.location.search);
+      var qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('im_user');
+      if (qUser) u = { username: qUser };
+    }
+
+    // Check cookies: im_user, sso_username, username, user
+    if (!u && typeof document !== 'undefined' && document.cookie) {
+      var cm = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|username|user)=([^;]+)/i);
+      if (cm && cm[1]) {
+        var cUser = decodeURIComponent(cm[1].trim());
+        if (cUser) {
+          try { u = JSON.parse(cUser); } catch (_) { u = { username: cUser }; }
+        }
+      }
+    }
+
+    // Check token claims if present
+    if (!u && typeof localStorage !== 'undefined') {
+      var tok = localStorage.getItem('auth_token') || localStorage.getItem('access_token');
+      if (tok && tok.indexOf('.') !== -1) {
+        try {
+          var payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+          if (payload) {
+            u = {
+              username: payload.preferred_username || payload.username || payload.sub,
+              full_name: payload.name || payload.full_name || payload.displayName,
+              email: payload.email
+            };
           }
-        });
+        } catch (_) {}
+      }
+    }
+
+    // Check storage keys
+    if (!u) {
+      var ssoUname = localStorage.getItem('sso_username') || localStorage.getItem('username');
+      if (ssoUname) u = { username: ssoUname };
+    }
+
+    if (!u) {
+      var raw = localStorage.getItem('sso_user') || localStorage.getItem('current_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo');
+      if (raw) {
+        try { u = JSON.parse(raw); } catch (_) {
+          if (typeof raw === 'string' && raw.length < 60) u = { username: raw };
+        }
+      }
+    }
+
+    if (u && (u.username || u.name || u.full_name)) {
+      var uname = (u.username || '').toLowerCase().trim();
+      var fname = (u.full_name || u.name || '').trim();
+      var displayName = (uname === 'admin' || fname.toLowerCase() === 'admin' || fname === 'Admin User' || fname === 'Administrator')
+        ? 'admin'
+        : (fname && fname !== 'SSO Enterprise User' ? fname : (u.username || 'User'));
+
+      var initials = (displayName === 'admin')
+        ? 'AD'
+        : (displayName.split(' ').filter(Boolean).map(function(s) { return s[0]; }).join('').toUpperCase().slice(0, 2) || 'U');
+
+      function applyUserEarly() {
+        var nameEl = document.getElementById('userName');
+        var avatarEl = document.getElementById('userAvatar');
+        if (nameEl && displayName) nameEl.textContent = displayName;
+        if (avatarEl && initials) avatarEl.textContent = initials;
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyUserEarly);
+      } else {
+        applyUserEarly();
       }
     }
   } catch (_) {}
@@ -148,6 +208,20 @@ document.addEventListener('DOMContentLoaded', function() {
     actionStr = actionStr.trim();
     if (!actionStr) return;
 
+    // Handle chained statements separated by semicolons
+    if (actionStr.indexOf(';') !== -1) {
+      var statements = actionStr.split(';').map(function(s) { return s.trim(); }).filter(Boolean);
+      if (statements.length > 1) {
+        for (var i = 0; i < statements.length; i++) {
+          dispatchAction(statements[i], targetEl, evt);
+        }
+        return;
+      } else if (statements.length === 1) {
+        actionStr = statements[0];
+      }
+    }
+    actionStr = actionStr.replace(/;\s*$/, '');
+
     // Special quick prompts
     if (actionStr === 'sendQuickPrompt' && targetEl.getAttribute('data-prompt')) {
       if (typeof window.sendQuickPrompt === 'function') {
@@ -205,12 +279,6 @@ document.addEventListener('DOMContentLoaded', function() {
       window.location.hash = hashVal;
       return;
     }
-
-    // Safe execution fallback if Function constructor permitted
-    try {
-      var execFn = new Function('event', 'target', actionStr);
-      execFn.call(targetEl, evt, targetEl);
-    } catch (_) {}
   }
 
   // Delegated Click Listener

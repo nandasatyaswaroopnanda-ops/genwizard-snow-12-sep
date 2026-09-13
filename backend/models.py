@@ -131,7 +131,7 @@ class User(Base):
             "keycloak_subject": self.keycloak_subject,
             "employee_id": self.employee_id,
             "username": self.username,
-            "full_name": self.full_name,
+            "full_name": "admin" if (self.username == "admin" and self.full_name in ("Admin User", "admin")) else self.full_name,
             "first_name": self.first_name,
             "last_name": self.last_name,
             "email": self.email,
