@@ -217,5 +217,30 @@ def test_public_applications_and_projects_endpoints(client):
     assert isinstance(projs, list)
     assert len(projs) > 0
 
+def test_sso_user_with_admin_group_display_name_parity():
+    """
+    Verifies that when an SSO user has an admin group (e.g. ITSM-Admins / itsm_admin role),
+    their full name and username are preserved and never coerced to 'admin',
+    and only the actual local user admin (id=1, is_local=True) formats as 'admin'.
+    """
+    from backend.models import User
+    local_admin = User(id=1, username="admin", full_name="admin", role="itsm_admin", is_local=True)
+    assert local_admin.to_dict()["full_name"] == "admin"
+
+    sso_admin = User(
+        id=105,
+        username="sarah.sso",
+        full_name="Sarah Connor",
+        role="itsm_admin",
+        is_local=False,
+        email="sarah.sso@company.com"
+    )
+    sso_dict = sso_admin.to_dict()
+    assert sso_dict["username"] == "sarah.sso"
+    assert sso_dict["full_name"] == "Sarah Connor"
+    assert sso_dict["full_name"] != "admin"
+    assert sso_dict["is_global_admin"] is True
+    assert sso_dict["is_local"] is False
+
 
 

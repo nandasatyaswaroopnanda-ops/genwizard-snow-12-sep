@@ -55,6 +55,7 @@
 
     <!-- Global Search Bar -->
     <div class="flex-1 max-w-xl mx-6 relative hidden md:block">
+      <label for="globalSearchInput" class="sr-only">Search tickets, incidents, runbooks, or knowledge</label>
       <i data-lucide="search" class="w-4 h-4 text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
       <input
         type="text"
@@ -351,6 +352,7 @@
     <!-- Input Footer -->
     <div class="p-2.5 border-t border-[var(--border-color)] bg-[var(--bg-secondary)]">
       <form id="drawerForm" class="flex items-center space-x-2">
+        <label for="drawerInput" class="sr-only">Ask GenWizard Support Copilot</label>
         <input
           type="text"
           id="drawerInput"

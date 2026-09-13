@@ -797,6 +797,7 @@ async function loadCurrentUser() {
   if (ssoUser) {
     if (ssoUser.id) headers['X-User-ID'] = String(ssoUser.id);
     if (ssoUser.username) headers['X-User-Name'] = ssoUser.username;
+    if (ssoUser.full_name) headers['X-User-Fullname'] = ssoUser.full_name;
     if (ssoUser.email) headers['X-User-Email'] = ssoUser.email;
   } else {
     const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id');
@@ -813,7 +814,18 @@ async function loadCurrentUser() {
     if (res.ok) {
       const backendUser = await res.json();
       if (backendUser && (backendUser.username || backendUser.full_name)) {
-        state.currentUser = backendUser;
+        if (ssoUser && ssoUser.username && ssoUser.username !== 'admin' && backendUser.id === 1 && backendUser.username === 'admin') {
+          // Guard: If an SSO session is active and backend returned local fallback admin, preserve SSO user identity
+          state.currentUser = {
+            ...backendUser,
+            ...ssoUser,
+            is_global_admin: backendUser.is_global_admin,
+            role: ssoUser.role || backendUser.role,
+            is_local: false
+          };
+        } else {
+          state.currentUser = backendUser;
+        }
         localStorage.setItem('current_user', JSON.stringify(state.currentUser));
         if (state.currentUser.id) {
           localStorage.setItem('nexus_user_id', String(state.currentUser.id));
@@ -990,20 +1002,43 @@ function getUserDisplayName(user) {
   const uname = (user.username || '').toLowerCase().trim();
   const fname = (user.full_name || user.name || '').trim();
 
-  // If actual "admin" is logged in, show "admin" as explicitly required
-  if (uname === 'admin' || fname.toLowerCase() === 'admin' || fname === 'Admin User' || fname === 'Administrator') {
+  // Check if an SSO session is active
+  const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '').toLowerCase().trim();
+  const ssoUserRaw = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_user') || '') : '');
+  const hasSsoSession = !!(ssoUname || ssoUserRaw);
+
+  // Local bootstrap admin check: ONLY actual local user 'admin' displays as 'admin'
+  const isActualLocalAdmin = (uname === 'admin' || uname === 'administrator') &&
+    (user.is_local === true || user.id === 1) &&
+    !hasSsoSession;
+
+  if (isActualLocalAdmin) {
     return 'admin';
   }
 
-  // If valid full_name is present and distinct from generic placeholders, show it
-  if (fname && fname !== 'SSO Enterprise User' && fname !== 'User') {
+  // For SSO users (even with admin group attached), show their real SSO full name or username
+  if (fname && fname !== 'SSO Enterprise User' && fname !== 'User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin') {
     return fname;
   }
 
-  // Fallback to username or email prefix
-  if (user.username) return user.username;
-  if (user.email) return user.email.split('@')[0];
-  return 'User';
+  if (user.full_name && user.full_name !== 'admin' && user.full_name !== 'Admin User' && user.full_name !== 'Administrator') {
+    return user.full_name;
+  }
+
+  if (ssoUname && ssoUname !== 'admin') {
+    return ssoUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+  if (user.username && user.username !== 'admin') {
+    return user.username;
+  }
+
+  if (user.email) {
+    const prefix = user.email.split('@')[0];
+    if (prefix && prefix.toLowerCase() !== 'admin') return prefix;
+  }
+
+  return (user.username || fname || 'User');
 }
 
 function updateUserUI() {
@@ -1079,6 +1114,8 @@ function switchUser(userId) {
   localStorage.removeItem('auth_token');
   localStorage.removeItem('access_token');
   localStorage.removeItem('active_user_id');
+  localStorage.removeItem('sso_user');
+  localStorage.removeItem('sso_username');
   toggleUserDropdown();
   if (userId === 2) {
     window.location.hash = '#/my-tickets';

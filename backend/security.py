@@ -444,6 +444,7 @@ def get_current_user(
                         full_name=display_full_name,
                         email=str(ext_mail) if ext_mail else f"{ext_uname}@enterprise.corp",
                         role=assigned_role,
+                        is_local=False,
                         active=True
                     )
                     db.add(user)
@@ -511,7 +512,9 @@ def get_current_user(
                     username=claims.get("preferred_username") or email.split("@", 1)[0],
                     full_name=full_name,
                     first_name=claims.get("given_name"), last_name=claims.get("family_name"), email=email,
-                    department=claims.get("department"), location=claims.get("location"), role=_user_role(claims, db), active=True,
+                    department=claims.get("department"), location=claims.get("location"), role=_user_role(claims, db),
+                    is_local=False,
+                    active=True,
                 )
                 db.add(user)
             else:
@@ -622,6 +625,7 @@ def get_current_user(
                 full_name=display_name,
                 email=ext_email if ext_email else f"{ext_username}@enterprise.corp",
                 role="itsm_read",
+                is_local=False,
                 active=True
             )
             db.add(user)

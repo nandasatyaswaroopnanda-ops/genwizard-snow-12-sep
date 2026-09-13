@@ -73,9 +73,13 @@
     if (u && (u.username || u.name || u.full_name)) {
       var uname = (u.username || '').toLowerCase().trim();
       var fname = (u.full_name || u.name || '').trim();
-      var displayName = (uname === 'admin' || fname.toLowerCase() === 'admin' || fname === 'Admin User' || fname === 'Administrator')
+      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user'));
+      var isLocalAdmin = (uname === 'admin' || uname === 'administrator') && (u.is_local === true || u.id === 1) && !ssoActive;
+      var displayName = isLocalAdmin
         ? 'admin'
-        : (fname && fname !== 'SSO Enterprise User' ? fname : (u.username || 'User'));
+        : (fname && fname !== 'SSO Enterprise User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin'
+            ? fname
+            : (u.username && u.username !== 'admin' ? u.username : (fname || 'User')));
 
       var initials = (displayName === 'admin')
         ? 'AD'
@@ -99,24 +103,87 @@
 
 // 3. Form Field Auto-Labeler (eliminates "A form field does not have a label associated with it" warnings)
 function ensureFormFieldLabels(root) {
-  if (!root || !root.querySelectorAll) return;
+  if (!root) return;
   try {
-    var fields = root.querySelectorAll('input, select, textarea');
+    var fields = [];
+    if (root.matches && root.matches('input, select, textarea')) {
+      fields.push(root);
+    }
+    if (root.querySelectorAll) {
+      var found = root.querySelectorAll('input, select, textarea');
+      for (var k = 0; k < found.length; k++) {
+        fields.push(found[k]);
+      }
+    }
     for (var i = 0; i < fields.length; i++) {
       var el = fields[i];
-      if (el.type === 'hidden') continue;
+      if (el.type === 'hidden' || el.type === 'button' || el.type === 'submit' || el.type === 'reset') continue;
+
+      if (!el.id) {
+        var baseName = el.getAttribute('name') || 'field';
+        el.id = baseName + '_' + Math.random().toString(36).substr(2, 9);
+      }
+      var fieldId = el.id;
+
+      // 1. Look for existing explicit label
+      var associatedLabel = document.querySelector('label[for="' + fieldId + '"]');
+      if (!associatedLabel && el.closest('label')) {
+        associatedLabel = el.closest('label');
+      }
+
+      // 2. If no explicit label, look for preceding sibling or parent container label
+      if (!associatedLabel) {
+        var prev = el.previousElementSibling;
+        while (prev) {
+          if (prev.tagName === 'LABEL') {
+            associatedLabel = prev;
+            break;
+          }
+          if (prev.querySelector) {
+            var subLabel = prev.querySelector('label');
+            if (subLabel) { associatedLabel = subLabel; break; }
+          }
+          prev = prev.previousElementSibling;
+        }
+      }
+
+      if (!associatedLabel && el.parentElement) {
+        var parentPrev = el.parentElement.previousElementSibling;
+        if (parentPrev && parentPrev.tagName === 'LABEL') {
+          associatedLabel = parentPrev;
+        } else if (el.parentElement.querySelector) {
+          var siblingLabel = el.parentElement.querySelector('label');
+          if (siblingLabel && !siblingLabel.hasAttribute('for')) {
+            associatedLabel = siblingLabel;
+          }
+        }
+      }
+
+      var labelText = '';
+      if (associatedLabel) {
+        if (!associatedLabel.getAttribute('for')) {
+          associatedLabel.setAttribute('for', fieldId);
+        }
+        labelText = associatedLabel.textContent ? associatedLabel.textContent.replace(/[*:\s]+/g, ' ').trim() : '';
+      }
+
+      if (!labelText) {
+        labelText = el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || el.id || 'Input field';
+        labelText = labelText.replace(/[*:\s]+/g, ' ').trim();
+      }
+
       if (!el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby')) {
-        var id = el.id;
-        var hasLabel = false;
-        if (id) {
-          hasLabel = !!document.querySelector('label[for="' + id + '"]');
-        }
-        if (!hasLabel && el.closest('label')) {
-          hasLabel = true;
-        }
-        if (!hasLabel) {
-          var labelText = el.getAttribute('placeholder') || el.getAttribute('name') || el.id || 'Form input';
-          el.setAttribute('aria-label', labelText);
+        el.setAttribute('aria-label', labelText);
+      }
+
+      // 3. Guarantee an associated <label for="..."> exists for every field in DOM
+      if (!document.querySelector('label[for="' + fieldId + '"]') && !el.closest('label')) {
+        var srLabel = document.createElement('label');
+        srLabel.setAttribute('for', fieldId);
+        srLabel.className = 'sr-only';
+        srLabel.textContent = labelText;
+        if (el.parentNode) {
+          el.parentNode.insertBefore(srLabel, el);
         }
       }
     }
