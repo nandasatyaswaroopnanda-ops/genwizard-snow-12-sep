@@ -851,10 +851,23 @@ async function loadCurrentUser() {
 }
 
 async function loadAllUsers() {
-  const savedUserId = localStorage.getItem('nexus_user_id') || '1';
+  const detectedToken = detectExternalAuthToken();
+  const authToken = detectedToken || localStorage.getItem('auth_token') || localStorage.getItem('access_token') || '';
+  const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id') || '1';
+
+  const headers = {};
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+  if (state.currentUser && state.currentUser.username) {
+    headers['X-User-Name'] = state.currentUser.username;
+  }
+  headers['X-User-ID'] = String(state.currentUser?.id || savedUserId);
+
   try {
     const res = await fetch(`${API_BASE}/auth/users`, {
-      headers: { 'X-User-ID': savedUserId }
+      headers,
+      credentials: 'include'
     });
     if (res.ok) {
       state.allUsers = await res.json();
@@ -1005,9 +1018,9 @@ function getUserDisplayName(user) {
   // Check if an SSO session is active
   const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '').toLowerCase().trim();
   const ssoUserRaw = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_user') || '') : '');
-  const hasSsoSession = !!(ssoUname || ssoUserRaw);
+  const hasSsoSession = !!(ssoUname || ssoUserRaw) || (typeof user.is_local === 'boolean' && user.is_local === false);
 
-  // Local bootstrap admin check: ONLY actual local user 'admin' displays as 'admin'
+  // Local bootstrap admin check: ONLY the actual local user 'admin' displays as 'admin'
   const isActualLocalAdmin = (uname === 'admin' || uname === 'administrator') &&
     (user.is_local === true || user.id === 1) &&
     !hasSsoSession;
@@ -1021,24 +1034,26 @@ function getUserDisplayName(user) {
     return fname;
   }
 
-  if (user.full_name && user.full_name !== 'admin' && user.full_name !== 'Admin User' && user.full_name !== 'Administrator') {
+  if (user.full_name && user.full_name.toLowerCase() !== 'admin' && user.full_name !== 'Admin User' && user.full_name !== 'Administrator') {
     return user.full_name;
   }
 
   if (ssoUname && ssoUname !== 'admin') {
-    return ssoUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return ssoUname.includes('.') ? ssoUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : ssoUname;
   }
 
-  if (user.username && user.username !== 'admin') {
-    return user.username;
+  if (user.username && user.username.toLowerCase() !== 'admin') {
+    return user.username.includes('.') ? user.username.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : user.username;
   }
 
   if (user.email) {
     const prefix = user.email.split('@')[0];
-    if (prefix && prefix.toLowerCase() !== 'admin') return prefix;
+    if (prefix && prefix.toLowerCase() !== 'admin') {
+      return prefix.includes('.') ? prefix.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : prefix;
+    }
   }
 
-  return (user.username || fname || 'User');
+  return (fname || user.username || 'User');
 }
 
 function updateUserUI() {
@@ -1081,32 +1096,103 @@ function renderUserSwitcherDropdown() {
   const container = document.getElementById('usersListContainer');
   if (!container) return;
 
-  container.innerHTML = state.allUsers.map(u => {
-    const isSelected = state.currentUser && state.currentUser.id === u.id;
+  const ssoActive = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('sso_username'))) ||
+    (state.currentUser && (!state.currentUser.is_local || (state.currentUser.username && state.currentUser.username.toLowerCase() !== 'admin')));
+
+  let usersToDisplay = (state.allUsers && state.allUsers.length) ? state.allUsers.slice() : [state.currentUser];
+
+  if (ssoActive) {
+    // Strictly only display the authenticated SSO user. Never display the local 'admin' user!
+    usersToDisplay = usersToDisplay.filter(u => {
+      if (!u) return false;
+      const uname = (u.username || '').toLowerCase().trim();
+      if (uname === 'admin' && (u.is_local === true || u.id === 1)) return false;
+      if (state.currentUser) {
+        return u.id === state.currentUser.id || uname === (state.currentUser.username || '').toLowerCase().trim();
+      }
+      return true;
+    });
+    if (!usersToDisplay.length && state.currentUser) {
+      usersToDisplay = [state.currentUser];
+    }
+  } else {
+    // Strictly only display the local admin user for local admin login!
+    usersToDisplay = usersToDisplay.filter(u => {
+      if (!u) return false;
+      const uname = (u.username || '').toLowerCase().trim();
+      return uname === 'admin';
+    });
+    if (!usersToDisplay.length && state.currentUser) {
+      usersToDisplay = [state.currentUser];
+    }
+  }
+
+  const headerEl = document.getElementById('userDropdownHeader') || container.previousElementSibling;
+  if (headerEl) {
+    headerEl.textContent = ssoActive ? 'SSO User Profile' : 'Administrator Profile';
+  }
+
+  const itemsHtml = usersToDisplay.map(u => {
     const uName = getUserDisplayName(u);
     const uInitials = (uName === 'admin') ? 'AD' : (uName.split(' ').filter(Boolean).map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U');
+    const isAdmin = !!(u.is_global_admin || u.username === 'admin' || ['administrator', 'itsm_admin', 'admin'].includes(u.role) || (u.custom_groups || []).includes('itsm_admin') || (u.custom_groups || []).includes('ITSM-Admins'));
+    const roleLabel = isAdmin ? (ssoActive ? 'Platform Administrator (SSO)' : 'Platform Administrator') : (u.role === 'itsm_user' ? 'Support Member' : 'End User');
     const userProj = (u.admin_projects && u.admin_projects[0]) || (u.support_projects && u.support_projects[0]) || '';
 
     return `
-      <div data-click="switchUser(${u.id})" class="flex items-center justify-between p-2.5 hover:bg-[var(--bg-tertiary)] cursor-pointer rounded-lg transition-colors ${isSelected ? 'bg-purple-50/50' : ''}">
-        <div class="flex items-center space-x-2.5">
-          <div class="w-8 h-8 rounded-full bg-slate-700 text-white text-xs font-bold flex items-center justify-center">
+      <div class="p-3 bg-[var(--bg-secondary)] rounded-lg">
+        <div class="flex items-center space-x-3 mb-2">
+          <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 shadow-sm">
             ${uInitials}
           </div>
-          <div>
-            <div class="font-semibold text-xs text-[var(--text-primary)]">${uName}</div>
-            ${userProj ? `<div class="text-[11px] text-purple-600 dark:text-purple-400 font-medium">${userProj}</div>` : ''}
+          <div class="min-w-0 flex-1">
+            <div class="font-bold text-xs text-[var(--text-primary)] truncate">${uName}</div>
+            <div class="text-[11px] text-[var(--text-secondary)] truncate">${u.email || (u.username + '@enterprise.corp')}</div>
           </div>
+        </div>
+        <div class="flex items-center justify-between pt-1 border-t border-[var(--border-color)]">
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${isAdmin ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}">
+            ${roleLabel}
+          </span>
+          ${userProj ? `<span class="text-[10px] text-purple-500 font-medium truncate max-w-[120px]">${userProj}</span>` : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  const signOutHtml = `
+    <div class="pt-2 border-t border-[var(--border-color)] mt-1">
+      <button data-action="userSignOut" class="w-full text-left px-3 py-2 rounded-lg text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center space-x-2 transition-colors">
+        <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+        <span>Sign Out</span>
+      </button>
+    </div>
+  `;
+
+  container.innerHTML = itemsHtml + signOutHtml;
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
 }
 
 function toggleUserDropdown() {
   const dd = document.getElementById('userDropdown');
   if (dd) dd.classList.toggle('hidden');
 }
+
+function userSignOut() {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('current_user');
+  localStorage.removeItem('sso_user');
+  localStorage.removeItem('sso_username');
+  localStorage.removeItem('active_user_id');
+  localStorage.removeItem('nexus_user_id');
+  toggleUserDropdown();
+  const isSubpath = window.location.pathname.startsWith('/itsm');
+  window.location.href = isSubpath ? '/itsm/sso-redirect.html' : '/sso-redirect.html';
+}
+window.userSignOut = userSignOut;
 
 function switchUser(userId) {
   localStorage.setItem('nexus_user_id', userId.toString());

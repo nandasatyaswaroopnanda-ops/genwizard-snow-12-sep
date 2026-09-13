@@ -19,13 +19,20 @@ def get_auth_config():
 def get_available_users(db: Session = Depends(get_db), current_user: User = Depends(get_authenticated_user)):
     """Returns list of users for switching personas in the UI."""
     from backend.security import keycloak_enabled, LOCAL_PERSONAS, _ensure_local_persona
+    # If the user is an SSO / external user, strictly return ONLY the authenticated SSO user.
+    # The local admin account and local personas must NEVER be mixed into or exposed in an SSO user's session.
+    if not current_user.is_local or current_user.username.lower() != "admin":
+        return [current_user.to_dict()]
+
     seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("1", "true", "yes")
     if seed_demo:
         for uid in LOCAL_PERSONAS:
             _ensure_local_persona(uid, db)
+        users = db.query(User).filter(User.active == True, User.is_local == True).all()
+        return [u.to_dict() for u in users]
 
-    users = db.query(User).filter(User.active == True).all()
-    return [u.to_dict() for u in users]
+    # If the authenticated user is the local admin user, strictly return only the local admin user.
+    return [current_user.to_dict()]
 
 @router.get("/current")
 def get_current_user(

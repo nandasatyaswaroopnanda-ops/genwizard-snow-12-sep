@@ -465,3 +465,41 @@ def test_external_im_user_display_name_and_admin_user_authority():
         assert data["full_name"] == "System Administrator"
         assert data["is_global_admin"] is True
         assert data["role"] == "itsm_admin"
+
+
+def test_user_dropdown_and_sso_admin_identity_isolation():
+    """Verify that an SSO user with admin permissions ONLY sees their own user in /api/auth/users,
+    and local 'admin' is never exposed or mixed into the SSO user dropdown."""
+    # 1. SSO user with admin permissions
+    sso_admin_claims = {
+        "username": "sarah.connor",
+        "displayName": "Sarah Connor",
+        "email": "sarah.connor@enterprise.com",
+        "roles": ["itsm_admin"]
+    }
+    with patch("backend.security._extract_external_token_claims", return_value=sso_admin_claims):
+        # Current user check
+        current_res = client.get("/api/auth/current", headers={"Authorization": "Bearer token_sarah"})
+        assert current_res.status_code == 200
+        current_data = current_res.json()
+        assert current_data["username"] == "sarah.connor"
+        assert current_data["full_name"] == "Sarah Connor"
+        assert current_data["is_global_admin"] is True
+
+        # /api/auth/users check: MUST strictly return only Sarah Connor, NOT local admin!
+        users_res = client.get("/api/auth/users", headers={"Authorization": "Bearer token_sarah"})
+        assert users_res.status_code == 200
+        users_data = users_res.json()
+        assert len(users_data) == 1
+        assert users_data[0]["username"] == "sarah.connor"
+        assert users_data[0]["full_name"] == "Sarah Connor"
+        assert users_data[0]["is_local"] is False
+
+    # 2. Local admin user login check in production mode: MUST strictly return only admin!
+    with patch.dict("os.environ", {"SEED_DEMO_DATA": "false"}):
+        local_admin_res = client.get("/api/auth/users", headers={"X-User-ID": "1"})
+        assert local_admin_res.status_code == 200
+        local_users = local_admin_res.json()
+        assert len(local_users) == 1
+        assert local_users[0]["username"] == "admin"
+        assert local_users[0]["is_local"] is True
