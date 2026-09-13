@@ -443,7 +443,7 @@ async def custom_swagger_ui_html(req: Request):
         "</script>\n"
     )
     content = res.body.decode("utf-8").replace("</head>", f"{hide_schema_css}\n{clean_dom_script}\n</head>")
-    return HTMLResponse(content=content, status_code=res.status_code, headers=dict(res.headers))
+    return HTMLResponse(content=content, status_code=res.status_code)
 
 @app.get("/redoc", include_in_schema=False)
 @app.get("/itsm/redoc", include_in_schema=False)
@@ -460,7 +460,7 @@ async def custom_redoc_html(req: Request):
     )
     hide_redoc_css = "<style> a[href*='openapi.json'], button:has-text('Download') { display: none !important; } </style>\n"
     content = res.body.decode("utf-8").replace("</head>", f"{hide_redoc_css}\n</head>")
-    return HTMLResponse(content=content, status_code=res.status_code, headers=dict(res.headers))
+    return HTMLResponse(content=content, status_code=res.status_code)
 
 @app.get("/itsm/openapi.json", include_in_schema=False)
 def get_itsm_openapi():
