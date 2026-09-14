@@ -1125,13 +1125,13 @@ function formatUserEmail(u) {
     }
   }
 
-  // Clean any duplicated domain chaining (e.g. user@accenture.com@enterprise.corp or user@accenture.com@...)
+  // Clean any duplicated domain chaining (e.g. user@accenture.com@enterprise.corp or user@accenture.com@enterprise.org)
   if (email.includes('@accenture.com@')) {
     email = email.replace(/@accenture\.com@.*$/i, '@accenture.com');
-  } else if (email.toLowerCase().endsWith('@enterprise.corp') && email.toLowerCase().includes('@accenture.com')) {
-    email = email.replace(/@enterprise\.corp$/i, '');
-  } else if (email.toLowerCase().endsWith('@enterprise.corp')) {
-    email = email.replace(/@enterprise\.corp$/i, '@accenture.com');
+  } else if ((email.toLowerCase().endsWith('@enterprise.corp') || email.toLowerCase().endsWith('@enterprise.org')) && email.toLowerCase().includes('@accenture.com')) {
+    email = email.replace(/(@enterprise\.corp|@enterprise\.org)$/i, '');
+  } else if (email.toLowerCase().endsWith('@enterprise.corp') || email.toLowerCase().endsWith('@enterprise.org')) {
+    email = email.replace(/(@enterprise\.corp|@enterprise\.org)$/i, '@accenture.com');
   }
 
   return email;

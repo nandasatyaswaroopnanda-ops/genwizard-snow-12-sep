@@ -217,23 +217,23 @@ def _format_user_email(username: str, explicit_email: Optional[str] = None) -> s
     domain = os.getenv("ACCENTURE_EMAIL_DOMAIN", "accenture.com").strip().lower()
     if explicit_email and str(explicit_email).strip():
         e = str(explicit_email).strip()
-        # Clean double-domain artifacts if any (e.g. user@accenture.com@enterprise.corp)
+        # Clean double-domain artifacts if any (e.g. user@accenture.com@enterprise.corp or user@accenture.com@enterprise.org)
         if "@" in e:
             if "@accenture.com@" in e.lower():
                 e = re.sub(r"@accenture\.com@.*$", "@accenture.com", e, flags=re.IGNORECASE)
-            elif e.lower().endswith("@enterprise.corp") and "@accenture.com" in e.lower():
-                e = e[:-16]
-            elif e.lower().endswith("@enterprise.corp"):
-                e = re.sub(r"@enterprise\.corp$", f"@{domain}", e, flags=re.IGNORECASE)
+            elif (e.lower().endswith("@enterprise.corp") or e.lower().endswith("@enterprise.org")) and "@accenture.com" in e.lower():
+                e = re.sub(r"(@enterprise\.corp|@enterprise\.org)$", "", e, flags=re.IGNORECASE)
+            elif e.lower().endswith("@enterprise.corp") or e.lower().endswith("@enterprise.org"):
+                e = re.sub(r"(@enterprise\.corp|@enterprise\.org)$", f"@{domain}", e, flags=re.IGNORECASE)
             return e
     u = str(username or "").strip()
     if "@" in u:
         if "@accenture.com@" in u.lower():
             u = re.sub(r"@accenture\.com@.*$", "@accenture.com", u, flags=re.IGNORECASE)
-        elif u.lower().endswith("@enterprise.corp") and "@accenture.com" in u.lower():
-            u = u[:-16]
-        elif u.lower().endswith("@enterprise.corp"):
-            u = re.sub(r"@enterprise\.corp$", f"@{domain}", u, flags=re.IGNORECASE)
+        elif (u.lower().endswith("@enterprise.corp") or u.lower().endswith("@enterprise.org")) and "@accenture.com" in u.lower():
+            u = re.sub(r"(@enterprise\.corp|@enterprise\.org)$", "", u, flags=re.IGNORECASE)
+        elif u.lower().endswith("@enterprise.corp") or u.lower().endswith("@enterprise.org"):
+            u = re.sub(r"(@enterprise\.corp|@enterprise\.org)$", f"@{domain}", u, flags=re.IGNORECASE)
         return u
     return f"{u}@{domain}" if u else f"user@{domain}"
 
@@ -794,7 +794,7 @@ def get_current_user(
                         _ensure_local_persona(pid, db)
                         break
             if user:
-                if user.email and ("@accenture.com@" in user.email.lower() or user.email.lower().endswith("@enterprise.corp")):
+                if user.email and ("@accenture.com@" in user.email.lower() or user.email.lower().endswith("@enterprise.corp") or user.email.lower().endswith("@enterprise.org")):
                     user.email = _format_user_email(user.username, user.email)
                     db.commit()
                     db.refresh(user)
@@ -818,7 +818,7 @@ def get_current_user(
                 db.add(sso_user)
                 db.commit()
                 db.refresh(sso_user)
-            elif sso_user.email and ("@accenture.com@" in sso_user.email.lower() or sso_user.email.lower().endswith("@enterprise.corp")):
+            elif sso_user.email and ("@accenture.com@" in sso_user.email.lower() or sso_user.email.lower().endswith("@enterprise.corp") or sso_user.email.lower().endswith("@enterprise.org")):
                 sso_user.email = _format_user_email(sso_user.username, sso_user.email)
                 db.commit()
                 db.refresh(sso_user)

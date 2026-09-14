@@ -563,8 +563,9 @@ def test_accenture_sso_email_formatting_and_no_double_domain_chaining():
     # 2. Plain username -> defaults to @accenture.com
     assert _format_user_email("satya.swaroop") == "satya.swaroop@accenture.com"
 
-    # 3. Clean legacy double domain or @enterprise.corp suffix
+    # 3. Clean legacy double domain or @enterprise.corp / @enterprise.org suffix
     assert _format_user_email("satya.swaroop@accenture.com", "satya.swaroop@accenture.com@enterprise.corp") == "satya.swaroop@accenture.com"
+    assert _format_user_email("satya.swaroop@accenture.com", "satya.swaroop@accenture.com@enterprise.org") == "satya.swaroop@accenture.com"
     assert _format_user_email("satya.swaroop@accenture.com", "satya.swaroop@accenture.com@accenture.com") == "satya.swaroop@accenture.com"
 
     # 4. Authenticate user with ?username=satya.swaroop@accenture.com via API
@@ -573,6 +574,7 @@ def test_accenture_sso_email_formatting_and_no_double_domain_chaining():
     user_data = res.json()
     assert user_data["email"] == "satya.swaroop@accenture.com"
     assert not user_data["email"].endswith("@enterprise.corp")
+    assert not user_data["email"].endswith("@enterprise.org")
     assert "@accenture.com@" not in user_data["email"]
 
 

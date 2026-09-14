@@ -90,20 +90,20 @@
       if (rawEmail) {
         if (rawEmail.includes('@accenture.com@')) {
           rawEmail = rawEmail.replace(/@accenture\.com@.*$/i, '@accenture.com');
-        } else if (rawEmail.toLowerCase().endsWith('@enterprise.corp') && rawEmail.includes('@accenture.com')) {
-          rawEmail = rawEmail.replace(/@enterprise\.corp$/i, '');
-        } else if (rawEmail.toLowerCase().endsWith('@enterprise.corp')) {
-          rawEmail = rawEmail.replace(/@enterprise\.corp$/i, '@accenture.com');
+        } else if ((rawEmail.toLowerCase().endsWith('@enterprise.corp') || rawEmail.toLowerCase().endsWith('@enterprise.org')) && rawEmail.includes('@accenture.com')) {
+          rawEmail = rawEmail.replace(/(@enterprise\.corp|@enterprise\.org)$/i, '');
+        } else if (rawEmail.toLowerCase().endsWith('@enterprise.corp') || rawEmail.toLowerCase().endsWith('@enterprise.org')) {
+          rawEmail = rawEmail.replace(/(@enterprise\.corp|@enterprise\.org)$/i, '@accenture.com');
         }
         try { localStorage.setItem('sso_email', rawEmail); } catch (_) {}
       }
 
       try {
         var curRaw = localStorage.getItem('current_user');
-        if (curRaw && curRaw.indexOf('@enterprise.corp') !== -1) {
+        if (curRaw && (curRaw.indexOf('@enterprise.corp') !== -1 || curRaw.indexOf('@enterprise.org') !== -1)) {
           var curParsed = JSON.parse(curRaw);
           if (curParsed && curParsed.email) {
-            curParsed.email = curParsed.email.replace(/@accenture\.com@.*$/i, '@accenture.com').replace(/@enterprise\.corp$/i, curParsed.email.indexOf('@accenture.com') !== -1 ? '' : '@accenture.com');
+            curParsed.email = curParsed.email.replace(/@accenture\.com@.*$/i, '@accenture.com').replace(/(@enterprise\.corp|@enterprise\.org)$/i, curParsed.email.indexOf('@accenture.com') !== -1 ? '' : '@accenture.com');
             localStorage.setItem('current_user', JSON.stringify(curParsed));
           }
         }
