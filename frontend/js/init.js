@@ -77,15 +77,39 @@
     if (u && (u.username || u.name || u.full_name)) {
       var uname = (u.username || '').toLowerCase().trim();
       var fname = (u.full_name || u.name || '').trim();
-      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user') || localStorage.getItem('auth_token') || localStorage.getItem('apiToken')) || (uname !== 'admin' && uname !== 'administrator');
-      var isLocalAdmin = (uname === 'admin' || uname === 'administrator') && (u.is_local === true || u.id === 1) && !ssoActive;
+      var cleanUname = uname.split('@')[0];
+      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user') || localStorage.getItem('auth_token') || localStorage.getItem('apiToken')) || (cleanUname !== 'admin' && cleanUname !== 'administrator');
+      var isLocalAdmin = (cleanUname === 'admin' || cleanUname === 'administrator') && (u.is_local === true || u.id === 1) && !ssoActive;
       var displayName = isLocalAdmin
         ? 'admin'
         : (fname && fname !== 'SSO Enterprise User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin'
             ? fname
-            : (u.username && u.username !== 'admin' ? (u.username.includes('.') ? u.username.replace('.', ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); }) : u.username) : (fname || 'User')));
+            : (cleanUname && cleanUname !== 'admin' ? (cleanUname.includes('.') ? cleanUname.replace(/\./g, ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); }) : cleanUname) : (fname || 'User')));
 
-      if (!isLocalAdmin && u.username && u.username !== 'admin') {
+      var rawEmail = (u.email || (uname.includes('@') ? uname : '')).trim();
+      if (rawEmail) {
+        if (rawEmail.includes('@accenture.com@')) {
+          rawEmail = rawEmail.replace(/@accenture\.com@.*$/i, '@accenture.com');
+        } else if (rawEmail.toLowerCase().endsWith('@enterprise.corp') && rawEmail.includes('@accenture.com')) {
+          rawEmail = rawEmail.replace(/@enterprise\.corp$/i, '');
+        } else if (rawEmail.toLowerCase().endsWith('@enterprise.corp')) {
+          rawEmail = rawEmail.replace(/@enterprise\.corp$/i, '@accenture.com');
+        }
+        try { localStorage.setItem('sso_email', rawEmail); } catch (_) {}
+      }
+
+      try {
+        var curRaw = localStorage.getItem('current_user');
+        if (curRaw && curRaw.indexOf('@enterprise.corp') !== -1) {
+          var curParsed = JSON.parse(curRaw);
+          if (curParsed && curParsed.email) {
+            curParsed.email = curParsed.email.replace(/@accenture\.com@.*$/i, '@accenture.com').replace(/@enterprise\.corp$/i, curParsed.email.indexOf('@accenture.com') !== -1 ? '' : '@accenture.com');
+            localStorage.setItem('current_user', JSON.stringify(curParsed));
+          }
+        }
+      } catch (_) {}
+
+      if (!isLocalAdmin && cleanUname && cleanUname !== 'admin') {
         try {
           localStorage.setItem('sso_username', u.username);
           sessionStorage.setItem('sso_username', u.username);
@@ -99,6 +123,7 @@
               username: u.username,
               full_name: displayName,
               role: u.role || 'itsm_read',
+              email: rawEmail || (cleanUname ? cleanUname + '@accenture.com' : ''),
               is_local: false
             };
           }

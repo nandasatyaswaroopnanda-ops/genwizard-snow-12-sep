@@ -1,5 +1,6 @@
 """Keycloak bearer-token validation and role-to-access mapping."""
 import os
+import re
 import json
 import base64
 import zlib
@@ -210,6 +211,32 @@ def _validate_token(token: str) -> Dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Keycloak access token") from exc
+
+def _format_user_email(username: str, explicit_email: Optional[str] = None) -> str:
+    """Format clean enterprise email address, preventing duplicate domain suffixes and ensuring accenture.com domain."""
+    domain = os.getenv("ACCENTURE_EMAIL_DOMAIN", "accenture.com").strip().lower()
+    if explicit_email and str(explicit_email).strip():
+        e = str(explicit_email).strip()
+        # Clean double-domain artifacts if any (e.g. user@accenture.com@enterprise.corp)
+        if "@" in e:
+            if "@accenture.com@" in e.lower():
+                e = re.sub(r"@accenture\.com@.*$", "@accenture.com", e, flags=re.IGNORECASE)
+            elif e.lower().endswith("@enterprise.corp") and "@accenture.com" in e.lower():
+                e = e[:-16]
+            elif e.lower().endswith("@enterprise.corp"):
+                e = re.sub(r"@enterprise\.corp$", f"@{domain}", e, flags=re.IGNORECASE)
+            return e
+    u = str(username or "").strip()
+    if "@" in u:
+        if "@accenture.com@" in u.lower():
+            u = re.sub(r"@accenture\.com@.*$", "@accenture.com", u, flags=re.IGNORECASE)
+        elif u.lower().endswith("@enterprise.corp") and "@accenture.com" in u.lower():
+            u = u[:-16]
+        elif u.lower().endswith("@enterprise.corp"):
+            u = re.sub(r"@enterprise\.corp$", f"@{domain}", u, flags=re.IGNORECASE)
+        return u
+    return f"{u}@{domain}" if u else f"user@{domain}"
+
 
 LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
     1: {
@@ -492,7 +519,7 @@ def get_current_user(
                     user = User(
                         username=str(ext_uname).strip(),
                         full_name=display_full_name,
-                        email=str(ext_mail) if ext_mail else f"{ext_uname}@enterprise.corp",
+                        email=_format_user_email(str(ext_uname), ext_mail),
                         role=assigned_role,
                         is_local=False,
                         active=True
@@ -526,6 +553,12 @@ def get_current_user(
                     # Keep full_name synchronized with external IM if token has name claim
                     if ext_name and str(ext_name).strip() and user.full_name != str(ext_name).strip():
                         user.full_name = str(ext_name).strip()
+                        db.commit()
+                        db.refresh(user)
+                    # Clean and synchronize email
+                    clean_em = _format_user_email(user.username, ext_mail or user.email)
+                    if clean_em and user.email != clean_em:
+                        user.email = clean_em
                         db.commit()
                         db.refresh(user)
                     try:
@@ -711,7 +744,7 @@ def get_current_user(
             user = User(
                 username=ext_username,
                 full_name=display_name,
-                email=ext_email if ext_email else f"{ext_username}@enterprise.corp",
+                email=_format_user_email(ext_username, ext_email),
                 role=assigned_role,
                 is_local=False,
                 active=True
@@ -734,6 +767,11 @@ def get_current_user(
                 user.is_local = False
             if ext_fullname and user.full_name != ext_fullname and user.username.lower() != "admin":
                 user.full_name = ext_fullname
+            clean_em = _format_user_email(user.username, ext_email or user.email)
+            if clean_em and user.email != clean_em:
+                user.email = clean_em
+                db.commit()
+                db.refresh(user)
             return user
 
     has_sso_presence = bool(
@@ -756,6 +794,10 @@ def get_current_user(
                         _ensure_local_persona(pid, db)
                         break
             if user:
+                if user.email and ("@accenture.com@" in user.email.lower() or user.email.lower().endswith("@enterprise.corp")):
+                    user.email = _format_user_email(user.username, user.email)
+                    db.commit()
+                    db.refresh(user)
                 return user
 
     if not keycloak_enabled():
@@ -768,12 +810,16 @@ def get_current_user(
                 sso_user = User(
                     username=u_name,
                     full_name=ext_fullname or (u_name.replace(".", " ").title() if u_name != "admin" else "SSO Enterprise User"),
-                    email=ext_email or f"{u_name}@enterprise.corp",
+                    email=_format_user_email(u_name, ext_email),
                     role="itsm_admin",
                     is_local=False,
                     active=True
                 )
                 db.add(sso_user)
+                db.commit()
+                db.refresh(sso_user)
+            elif sso_user.email and ("@accenture.com@" in sso_user.email.lower() or sso_user.email.lower().endswith("@enterprise.corp")):
+                sso_user.email = _format_user_email(sso_user.username, sso_user.email)
                 db.commit()
                 db.refresh(sso_user)
             return sso_user

@@ -905,7 +905,7 @@ async function loadCurrentUser() {
             id: (ssoUser && ssoUser.id && ssoUser.id !== 1) ? ssoUser.id : (backendUser.id !== 1 ? backendUser.id : 100),
             username: activeSsoName,
             full_name: activeSsoFull,
-            email: (ssoUser && ssoUser.email) || `${activeSsoName}@enterprise.corp`,
+            email: (ssoUser && ssoUser.email) ? formatUserEmail(ssoUser) : formatUserEmail({ username: activeSsoName }),
             is_global_admin: backendUser.is_global_admin,
             role: (ssoUser && ssoUser.role) || backendUser.role,
             assignment_group_ids: backendUser.assignment_group_ids || [],
@@ -1109,6 +1109,34 @@ function updateNavVisibilityForRole() {
   }
 }
 
+function formatUserEmail(u) {
+  if (!u) return '';
+  let email = (u.email || '').trim();
+  const uname = (u.username || '').trim();
+
+  // If email is empty, check if username is already an email
+  if (!email) {
+    if (uname.includes('@')) {
+      email = uname;
+    } else if (uname && uname.toLowerCase() !== 'admin') {
+      email = `${uname}@accenture.com`;
+    } else if (uname.toLowerCase() === 'admin') {
+      email = 'admin@company.com';
+    }
+  }
+
+  // Clean any duplicated domain chaining (e.g. user@accenture.com@enterprise.corp or user@accenture.com@...)
+  if (email.includes('@accenture.com@')) {
+    email = email.replace(/@accenture\.com@.*$/i, '@accenture.com');
+  } else if (email.toLowerCase().endsWith('@enterprise.corp') && email.toLowerCase().includes('@accenture.com')) {
+    email = email.replace(/@enterprise\.corp$/i, '');
+  } else if (email.toLowerCase().endsWith('@enterprise.corp')) {
+    email = email.replace(/@enterprise\.corp$/i, '@accenture.com');
+  }
+
+  return email;
+}
+
 function getUserDisplayName(user) {
   if (!user) return 'User';
   const uname = (user.username || '').toLowerCase().trim();
@@ -1142,17 +1170,19 @@ function getUserDisplayName(user) {
   }
 
   if (ssoUname && ssoUname !== 'admin') {
-    return ssoUname.includes('.') ? ssoUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : ssoUname;
+    const raw = ssoUname.split('@')[0];
+    return raw.includes('.') ? raw.replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : raw;
   }
 
   if (user.username && user.username.toLowerCase() !== 'admin') {
-    return user.username.includes('.') ? user.username.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : user.username;
+    const raw = user.username.split('@')[0];
+    return raw.includes('.') ? raw.replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : raw;
   }
 
   if (user.email) {
     const prefix = user.email.split('@')[0];
     if (prefix && prefix.toLowerCase() !== 'admin') {
-      return prefix.includes('.') ? prefix.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : prefix;
+      return prefix.includes('.') ? prefix.replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : prefix;
     }
   }
 
@@ -1162,7 +1192,8 @@ function getUserDisplayName(user) {
       return early.full_name;
     }
     if (early && early.username && early.username.toLowerCase() !== 'admin') {
-      return early.username.includes('.') ? early.username.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : early.username;
+      const raw = early.username.split('@')[0];
+      return raw.includes('.') ? raw.replace(/\./g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : raw;
     }
     const storedFull = typeof localStorage !== 'undefined' ? localStorage.getItem('sso_fullname') : '';
     if (storedFull && !blockedAdminLabels.includes(storedFull.toLowerCase())) {
@@ -1264,7 +1295,7 @@ function renderUserSwitcherDropdown() {
           </div>
           <div class="min-w-0 flex-1">
             <div class="font-bold text-xs text-[var(--text-primary)] truncate">${uName}</div>
-            <div class="text-[11px] text-[var(--text-secondary)] truncate">${u.email || (u.username + '@enterprise.corp')}</div>
+            <div class="text-[11px] text-[var(--text-secondary)] truncate">${formatUserEmail(u)}</div>
           </div>
         </div>
         <div class="flex items-center justify-between pt-1 border-t border-[var(--border-color)]">
@@ -11063,7 +11094,7 @@ function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, p
             <div>
               <label class="block font-semibold text-xs mb-1 text-slate-400">Sample Token Claims (JSON)</label>
               <textarea id="sampleClaimsInput" rows="7" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 font-mono text-xs text-slate-200 focus:ring-1 focus:ring-purple-500">{
-  "email": "alex.engineer@enterprise.corp",
+  "email": "alex.engineer@accenture.com",
   "name": "Alex Engineer",
   "groups": ["ITSM-Admins", "Service Desk", "Cloud Operations"],
   "realm_access": {

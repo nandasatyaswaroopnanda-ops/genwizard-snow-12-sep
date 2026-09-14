@@ -553,3 +553,27 @@ def test_query_param_and_cookie_sso_username_override_local_admin():
     assert data_ck["is_local"] is False
 
 
+def test_accenture_sso_email_formatting_and_no_double_domain_chaining():
+    """Verify that @accenture.com usernames and emails never get chained with @enterprise.corp or duplicated."""
+    from backend.security import _format_user_email
+
+    # 1. Username already contains @accenture.com -> must remain @accenture.com with no suffix appended
+    assert _format_user_email("satya.swaroop@accenture.com") == "satya.swaroop@accenture.com"
+
+    # 2. Plain username -> defaults to @accenture.com
+    assert _format_user_email("satya.swaroop") == "satya.swaroop@accenture.com"
+
+    # 3. Clean legacy double domain or @enterprise.corp suffix
+    assert _format_user_email("satya.swaroop@accenture.com", "satya.swaroop@accenture.com@enterprise.corp") == "satya.swaroop@accenture.com"
+    assert _format_user_email("satya.swaroop@accenture.com", "satya.swaroop@accenture.com@accenture.com") == "satya.swaroop@accenture.com"
+
+    # 4. Authenticate user with ?username=satya.swaroop@accenture.com via API
+    res = client.get("/api/auth/current?username=satya.swaroop@accenture.com")
+    assert res.status_code == 200
+    user_data = res.json()
+    assert user_data["email"] == "satya.swaroop@accenture.com"
+    assert not user_data["email"].endswith("@enterprise.corp")
+    assert "@accenture.com@" not in user_data["email"]
+
+
+

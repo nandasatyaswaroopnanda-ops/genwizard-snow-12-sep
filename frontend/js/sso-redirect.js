@@ -152,7 +152,7 @@ function buildClaimsForProvider(pType) {
     };
   } else {
     return {
-      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "admin.sso@enterprise.corp",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "admin.sso@accenture.com",
       "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "Enterprise SSO Admin",
       "memberOf": [
         "CN=ITSM-Admins,OU=Enterprise,DC=company,DC=com",
@@ -186,7 +186,7 @@ async function fallbackMockAuth(claims) {
       id: 99,
       username: (claims.email || claims.preferred_username || 'sso_user').split('@')[0],
       full_name: claims.name || 'SSO Enterprise User',
-      email: claims.email || claims.preferred_username || 'sso_user@enterprise.corp',
+      email: claims.email || (claims.preferred_username && claims.preferred_username.includes('@') ? claims.preferred_username : (claims.preferred_username ? `${claims.preferred_username}@accenture.com` : 'sso_user@accenture.com')),
       role: 'itsm_admin',
       permissions: ['tickets:read', 'tickets:update', 'admin:all'],
       assignment_groups: [{ id: 1, name: 'Service Desk' }]
