@@ -182,7 +182,7 @@ def init_db_and_seed():
                 full_name="Admin User",
                 first_name="Admin",
                 last_name="User",
-                email="admin@company.com",
+                email=f"admin@{os.getenv('ACCENTURE_EMAIL_DOMAIN', 'accenture.com').strip().lower()}",
                 phone="+1-555-0100",
                 department="IT Operations",
                 location="HQ",
@@ -372,10 +372,11 @@ def _seed_demo_items(db: Session, admin_user: User, cal_24x7: BusinessCalendar, 
             db.refresh(u)
         return u
 
-    john_smith = _ensure_user("EMP002", "john.smith", "John Smith", "John", "Smith", "john.smith@company.com", "employee")
-    sarah_johnson = _ensure_user("EMP003", "sarah.johnson", "Sarah Johnson", "Sarah", "Johnson", "sarah.johnson@company.com", "support_member")
-    david_wilson = _ensure_user("EMP004", "david.wilson", "David Wilson", "David", "Wilson", "david.wilson@company.com", "group_manager")
-    mike_brown = _ensure_user("EMP005", "mike.brown", "Mike Brown", "Mike", "Brown", "mike.brown@company.com", "support_member")
+    demo_domain = os.getenv('ACCENTURE_EMAIL_DOMAIN', 'accenture.com').strip().lower()
+    john_smith = _ensure_user("EMP002", "john.smith", "John Smith", "John", "Smith", f"john.smith@{demo_domain}", "employee")
+    sarah_johnson = _ensure_user("EMP003", "sarah.johnson", "Sarah Johnson", "Sarah", "Johnson", f"sarah.johnson@{demo_domain}", "support_member")
+    david_wilson = _ensure_user("EMP004", "david.wilson", "David Wilson", "David", "Wilson", f"david.wilson@{demo_domain}", "group_manager")
+    mike_brown = _ensure_user("EMP005", "mike.brown", "Mike Brown", "Mike", "Brown", f"mike.brown@{demo_domain}", "support_member")
 
     grp_payment_support = AssignmentGroup(
         group_id="GRP001",

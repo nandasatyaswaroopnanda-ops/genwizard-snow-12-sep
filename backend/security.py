@@ -238,6 +238,8 @@ def _format_user_email(username: str, explicit_email: Optional[str] = None) -> s
     return f"{u}@{domain}" if u else f"user@{domain}"
 
 
+_ent_domain = os.getenv("ACCENTURE_EMAIL_DOMAIN", "accenture.com").strip().lower()
+
 LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
     1: {
         "employee_id": "EMP001",
@@ -245,7 +247,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
         "full_name": "admin",
         "first_name": "Admin",
         "last_name": "User",
-        "email": "admin@company.com",
+        "email": f"admin@{_ent_domain}",
         "role": "itsm_admin",
         "department": "IT Operations",
         "location": "HQ",
@@ -258,7 +260,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
         "full_name": "John Smith",
         "first_name": "John",
         "last_name": "Smith",
-        "email": "john.smith@company.com",
+        "email": f"john.smith@{_ent_domain}",
         "role": "employee",
         "department": "Sales & Operations",
         "location": "HQ",
@@ -271,7 +273,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
         "full_name": "Sarah Johnson",
         "first_name": "Sarah",
         "last_name": "Johnson",
-        "email": "sarah.johnson@company.com",
+        "email": f"sarah.johnson@{_ent_domain}",
         "role": "support_member",
         "department": "Payment Application Support",
         "location": "HQ",
@@ -284,7 +286,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
         "full_name": "David Wilson",
         "first_name": "David",
         "last_name": "Wilson",
-        "email": "david.wilson@company.com",
+        "email": f"david.wilson@{_ent_domain}",
         "role": "group_manager",
         "department": "Database Support",
         "location": "HQ",
@@ -297,7 +299,7 @@ LOCAL_PERSONAS: Dict[int, Dict[str, Any]] = {
         "full_name": "Mike Brown",
         "first_name": "Mike",
         "last_name": "Brown",
-        "email": "mike.brown@company.com",
+        "email": f"mike.brown@{_ent_domain}",
         "role": "support_member",
         "department": "Cloud Operations",
         "location": "HQ",
