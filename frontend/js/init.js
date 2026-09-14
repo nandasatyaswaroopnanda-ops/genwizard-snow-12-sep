@@ -77,13 +77,33 @@
     if (u && (u.username || u.name || u.full_name)) {
       var uname = (u.username || '').toLowerCase().trim();
       var fname = (u.full_name || u.name || '').trim();
-      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user') || localStorage.getItem('auth_token') || localStorage.getItem('apiToken'));
+      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user') || localStorage.getItem('auth_token') || localStorage.getItem('apiToken')) || (uname !== 'admin' && uname !== 'administrator');
       var isLocalAdmin = (uname === 'admin' || uname === 'administrator') && (u.is_local === true || u.id === 1) && !ssoActive;
       var displayName = isLocalAdmin
         ? 'admin'
         : (fname && fname !== 'SSO Enterprise User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin'
             ? fname
             : (u.username && u.username !== 'admin' ? (u.username.includes('.') ? u.username.replace('.', ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); }) : u.username) : (fname || 'User')));
+
+      if (!isLocalAdmin && u.username && u.username !== 'admin') {
+        try {
+          localStorage.setItem('sso_username', u.username);
+          sessionStorage.setItem('sso_username', u.username);
+          if (displayName && displayName !== 'User') {
+            localStorage.setItem('sso_fullname', displayName);
+          }
+          localStorage.removeItem('nexus_user_id');
+          localStorage.removeItem('current_user');
+          if (typeof window !== 'undefined') {
+            window.__SSO_USER_EARLY = {
+              username: u.username,
+              full_name: displayName,
+              role: u.role || 'itsm_read',
+              is_local: false
+            };
+          }
+        } catch (_) {}
+      }
 
       var initials = (displayName === 'admin')
         ? 'AD'

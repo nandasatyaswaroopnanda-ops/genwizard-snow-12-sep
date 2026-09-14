@@ -155,13 +155,27 @@ function detectExternalAuthToken() {
 // Global Application State (declared early with var to eliminate TDZ issues)
 var _storedUser = null;
 try {
-  var _rawStored = typeof localStorage !== 'undefined' ? localStorage.getItem('current_user') : null;
-  if (_rawStored) {
-    var _parsed = JSON.parse(_rawStored);
-    // If an external token or SSO session is active, do NOT let a stale local admin user overwrite it
-    var _hasSso = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('sso_username') || !!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')));
-    if (!_hasSso || (_parsed && _parsed.username && _parsed.username.toLowerCase() !== 'admin')) {
-      _storedUser = _parsed;
+  if (typeof window !== 'undefined' && window.__SSO_USER_EARLY) {
+    _storedUser = window.__SSO_USER_EARLY;
+  } else {
+    var _ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || localStorage.getItem('username')) : null);
+    var _hasSso = !!(_ssoUname || (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken'))));
+    var _rawStored = typeof localStorage !== 'undefined' ? localStorage.getItem('current_user') : null;
+    if (_rawStored) {
+      var _parsed = JSON.parse(_rawStored);
+      if (!_hasSso && _parsed && (_parsed.username === 'admin' || _parsed.id === 1)) {
+        _storedUser = _parsed;
+      } else if (_parsed && _parsed.username && _parsed.username.toLowerCase() !== 'admin') {
+        _storedUser = _parsed;
+      }
+    }
+    if (!_storedUser && _ssoUname && _ssoUname !== 'admin') {
+      var _fname = typeof localStorage !== 'undefined' ? localStorage.getItem('sso_fullname') : '';
+      _storedUser = {
+        username: _ssoUname,
+        full_name: _fname || (_ssoUname.includes('.') ? _ssoUname.replace('.', ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); }) : _ssoUname),
+        is_local: false
+      };
     }
   }
 } catch (_) {}
@@ -183,12 +197,14 @@ var state = {
 };
 if (typeof window !== 'undefined') window.state = state;
 
-// Global fetch interceptor: automatically attaches Bearer token, apiToken & X-User-ID to all API calls
+// Global fetch interceptor: automatically attaches Bearer token, apiToken, X-User-Name & X-User-ID to API calls
 if (typeof window !== 'undefined' && window.fetch) {
   const _rawFetch = window.fetch.bind(window);
   window.fetch = function(resource, init) {
     init = init || {};
     const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken') || detectExternalAuthToken();
+    const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '') || (window.__SSO_USER_EARLY && window.__SSO_USER_EARLY.username);
+    const hasSso = !!(ssoUname || (state && state.currentUser && (!state.currentUser.is_local || state.currentUser.username !== 'admin')) || (typeof window !== 'undefined' && window.__SSO_USER_EARLY));
     const currentId = (state && state.currentUser && state.currentUser.id)
       ? state.currentUser.id.toString()
       : (localStorage.getItem('nexus_user_id') || '');
@@ -209,11 +225,20 @@ if (typeof window !== 'undefined' && window.fetch) {
       if (!headers.has('apiToken')) headers.set('apiToken', token);
       if (!headers.has('X-API-Token')) headers.set('X-API-Token', token);
     }
-    if (state && state.currentUser && state.currentUser.username) {
-      if (!headers.has('X-User-Name')) headers.set('X-User-Name', state.currentUser.username);
+    const unameToSend = (state && state.currentUser && state.currentUser.username && state.currentUser.username !== 'admin')
+      ? state.currentUser.username
+      : (ssoUname || (state && state.currentUser && state.currentUser.username));
+    if (unameToSend && !headers.has('X-User-Name')) {
+      headers.set('X-User-Name', unameToSend);
     }
-    if (currentId && !headers.has('X-User-ID') && (!token || currentId !== '1')) {
-      headers.set('X-User-ID', currentId);
+    const fnameToSend = (state && state.currentUser && state.currentUser.full_name) || (typeof localStorage !== 'undefined' && localStorage.getItem('sso_fullname'));
+    if (fnameToSend && !headers.has('X-User-Fullname') && !['admin user', 'system administrator', 'administrator', 'admin'].includes(fnameToSend.toLowerCase())) {
+      headers.set('X-User-Fullname', fnameToSend);
+    }
+    if (currentId && !headers.has('X-User-ID')) {
+      if (!hasSso || currentId !== '1') {
+        headers.set('X-User-ID', currentId);
+      }
     }
     init.headers = headers;
     return _rawFetch(resource, init);
@@ -716,7 +741,7 @@ async function loadCurrentUser() {
   }
 
   // 1. Resolve stored SSO or external Identity Management user from all sources
-  let ssoUser = null;
+  let ssoUser = (typeof window !== 'undefined' && window.__SSO_USER_EARLY) ? { ...window.__SSO_USER_EARLY } : null;
 
   // Check URL query parameters
   if (typeof window !== 'undefined' && window.location) {
@@ -725,13 +750,19 @@ async function loadCurrentUser() {
     const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
     const qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('sso_username') || sp.get('im_user') || sp.get('login')
       || hashParams.get('username') || hashParams.get('user') || hashParams.get('im_user');
+    const qName = sp.get('fullName') || sp.get('full_name') || sp.get('name') || sp.get('displayName') || sp.get('display_name');
     if (qUser && qUser.length > 0 && qUser.length < 60) {
       ssoUser = {
         username: qUser,
-        full_name: qUser === 'admin' ? 'admin' : qUser.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        full_name: qName || (qUser === 'admin' ? 'admin' : qUser.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase())),
         is_local: false
       };
       localStorage.setItem('sso_username', qUser);
+      if (ssoUser.full_name && ssoUser.full_name !== 'User') {
+        localStorage.setItem('sso_fullname', ssoUser.full_name);
+      }
+      localStorage.removeItem('nexus_user_id');
+      localStorage.removeItem('current_user');
     }
   }
 
@@ -752,6 +783,11 @@ async function loadCurrentUser() {
             full_name: cUname === 'admin' ? 'admin' : cUname.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
             is_local: false
           };
+        }
+        if (ssoUser && ssoUser.username && ssoUser.username !== 'admin') {
+          localStorage.setItem('sso_username', ssoUser.username);
+          localStorage.removeItem('nexus_user_id');
+          localStorage.removeItem('current_user');
         }
       }
     }
@@ -775,6 +811,11 @@ async function loadCurrentUser() {
             role: payload.role || (payload.roles && payload.roles.includes('admin') ? 'itsm_admin' : 'itsm_read'),
             is_local: false
           };
+          if (ssoUser.username && ssoUser.username !== 'admin') {
+            localStorage.setItem('sso_username', ssoUser.username);
+            localStorage.removeItem('nexus_user_id');
+            localStorage.removeItem('current_user');
+          }
         }
       }
     } catch (_) {}
@@ -784,10 +825,11 @@ async function loadCurrentUser() {
   if (!ssoUser) {
     for (const pk of ['sso_username', 'username']) {
       const pVal = localStorage.getItem(pk) || sessionStorage.getItem(pk);
-      if (pVal && typeof pVal === 'string' && pVal.length > 0 && pVal.length < 60) {
+      if (pVal && typeof pVal === 'string' && pVal.length > 0 && pVal.length < 60 && pVal.toLowerCase() !== 'admin') {
+        const sFull = localStorage.getItem('sso_fullname') || '';
         ssoUser = {
           username: pVal,
-          full_name: pVal === 'admin' ? 'admin' : pVal.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          full_name: sFull || pVal.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
           is_local: false
         };
         break;
@@ -804,7 +846,7 @@ async function loadCurrentUser() {
         if (raw) {
           const u = JSON.parse(raw);
           if (u && (u.username || u.name || u.full_name)) {
-            if (authToken && u.username === 'admin' && u.id === 1) continue;
+            if (u.username === 'admin' && (u.id === 1 || u.is_local)) continue;
             ssoUser = { ...u, is_local: false };
             break;
           }
@@ -827,7 +869,7 @@ async function loadCurrentUser() {
   }
 
   if (ssoUser) {
-    if (ssoUser.id) headers['X-User-ID'] = String(ssoUser.id);
+    if (ssoUser.id && ssoUser.id !== 1) headers['X-User-ID'] = String(ssoUser.id);
     if (ssoUser.username) headers['X-User-Name'] = ssoUser.username;
     if (ssoUser.full_name) headers['X-User-Fullname'] = ssoUser.full_name;
     if (ssoUser.email) headers['X-User-Email'] = ssoUser.email;
@@ -847,22 +889,35 @@ async function loadCurrentUser() {
     if (res.ok) {
       const backendUser = await res.json();
       if (backendUser && (backendUser.username || backendUser.full_name)) {
-        if (ssoUser && ssoUser.username && ssoUser.username !== 'admin' && backendUser.id === 1 && backendUser.username === 'admin') {
-          // Guard: If an SSO session is active and backend returned local fallback admin, preserve SSO user identity
+        const hasSsoActive = !!(ssoUser || authToken || (typeof localStorage !== 'undefined' && (localStorage.getItem('sso_username') || localStorage.getItem('sso_user'))) || (typeof window !== 'undefined' && window.__SSO_USER_EARLY));
+        const isBackendAdmin = (backendUser.id === 1 || (backendUser.username && backendUser.username.toLowerCase() === 'admin'));
+
+        if (hasSsoActive && isBackendAdmin) {
+          // Guard: Strictly preserve authentic SSO user identity when backend returns local fallback admin
+          const activeSsoName = (ssoUser && ssoUser.username && ssoUser.username !== 'admin')
+            ? ssoUser.username
+            : (localStorage.getItem('sso_username') || (window.__SSO_USER_EARLY && window.__SSO_USER_EARLY.username) || 'sso.user');
+          const activeSsoFull = (ssoUser && ssoUser.full_name && !['admin', 'admin user', 'system administrator', 'administrator'].includes(ssoUser.full_name.toLowerCase()))
+            ? ssoUser.full_name
+            : (localStorage.getItem('sso_fullname') || (window.__SSO_USER_EARLY && window.__SSO_USER_EARLY.full_name) || (activeSsoName.includes('.') ? activeSsoName.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : activeSsoName));
+
+          state.currentUser = {
+            id: (ssoUser && ssoUser.id && ssoUser.id !== 1) ? ssoUser.id : (backendUser.id !== 1 ? backendUser.id : 100),
+            username: activeSsoName,
+            full_name: activeSsoFull,
+            email: (ssoUser && ssoUser.email) || `${activeSsoName}@enterprise.corp`,
+            is_global_admin: backendUser.is_global_admin,
+            role: (ssoUser && ssoUser.role) || backendUser.role,
+            assignment_group_ids: backendUser.assignment_group_ids || [],
+            project_boundaries: backendUser.project_boundaries || {},
+            is_local: false
+          };
+        } else if (hasSsoActive && ssoUser && ssoUser.username && ssoUser.username !== 'admin') {
           state.currentUser = {
             ...backendUser,
             ...ssoUser,
-            is_global_admin: backendUser.is_global_admin,
-            role: ssoUser.role || backendUser.role,
-            is_local: false
-          };
-        } else if (authToken && backendUser.id === 1 && backendUser.username === 'admin') {
-          state.currentUser = {
-            ...backendUser,
-            username: (ssoUser && ssoUser.username) || 'sso.user',
-            full_name: (ssoUser && ssoUser.full_name) || 'SSO Enterprise User',
-            is_global_admin: backendUser.is_global_admin,
-            role: (ssoUser && ssoUser.role) || backendUser.role,
+            username: ssoUser.username,
+            full_name: ssoUser.full_name || backendUser.full_name,
             is_local: false
           };
         } else {
@@ -871,6 +926,8 @@ async function loadCurrentUser() {
         localStorage.setItem('current_user', JSON.stringify(state.currentUser));
         if (state.currentUser.id && state.currentUser.is_local) {
           localStorage.setItem('nexus_user_id', String(state.currentUser.id));
+        } else {
+          localStorage.removeItem('nexus_user_id');
         }
         updateUserUI();
       }
@@ -1058,7 +1115,8 @@ function getUserDisplayName(user) {
   const fname = (user.full_name || user.name || '').trim();
 
   // Check if an SSO session or external token is active
-  const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '').toLowerCase().trim();
+  const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '').toLowerCase().trim()
+    || ((typeof window !== 'undefined' && window.__SSO_USER_EARLY && window.__SSO_USER_EARLY.username) ? window.__SSO_USER_EARLY.username.toLowerCase().trim() : '');
   const ssoUserRaw = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_user') || '') : '');
   const hasExtToken = (typeof localStorage !== 'undefined' ? (!!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')) : false);
   const hasSsoSession = !!(ssoUname || ssoUserRaw || hasExtToken) || (typeof user.is_local === 'boolean' && user.is_local === false);
@@ -1072,12 +1130,14 @@ function getUserDisplayName(user) {
     return 'admin';
   }
 
-  // For SSO users (even with admin group attached), show their real SSO full name or username
-  if (fname && fname !== 'SSO Enterprise User' && fname !== 'User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin') {
+  const blockedAdminLabels = ['admin', 'administrator', 'admin user', 'system administrator', 'sso enterprise user', 'user'];
+
+  // For SSO users, show their real SSO full name or username
+  if (fname && !blockedAdminLabels.includes(fname.toLowerCase())) {
     return fname;
   }
 
-  if (user.full_name && user.full_name.toLowerCase() !== 'admin' && user.full_name !== 'Admin User' && user.full_name !== 'Administrator') {
+  if (user.full_name && !blockedAdminLabels.includes(user.full_name.toLowerCase())) {
     return user.full_name;
   }
 
@@ -1096,7 +1156,21 @@ function getUserDisplayName(user) {
     }
   }
 
-  return (fname || user.username || 'User');
+  if (hasSsoSession) {
+    const early = (typeof window !== 'undefined' && window.__SSO_USER_EARLY) ? window.__SSO_USER_EARLY : null;
+    if (early && early.full_name && !blockedAdminLabels.includes(early.full_name.toLowerCase())) {
+      return early.full_name;
+    }
+    if (early && early.username && early.username.toLowerCase() !== 'admin') {
+      return early.username.includes('.') ? early.username.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : early.username;
+    }
+    const storedFull = typeof localStorage !== 'undefined' ? localStorage.getItem('sso_fullname') : '';
+    if (storedFull && !blockedAdminLabels.includes(storedFull.toLowerCase())) {
+      return storedFull;
+    }
+  }
+
+  return isActualLocalAdmin ? 'admin' : (fname || user.username || 'User');
 }
 
 function updateUserUI() {

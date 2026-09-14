@@ -608,11 +608,29 @@ def get_current_user(
 
             return user
 
-    # 3. Check for external IM proxy headers and cookies (X-User-Name, X-Remote-User, X-Forwarded-User, Remote-User, etc.)
+    # 3. Check for external IM proxy headers, query parameters, and cookies
     ext_username = ""
     ext_fullname = ""
     ext_email = ""
     if request:
+        # Check query parameters for SSO username or identity
+        if hasattr(request, "query_params"):
+            for qk in ("username", "user", "sso_username", "sso_user", "im_user", "userName", "user_name", "login", "account"):
+                qv = request.query_params.get(qk)
+                if qv and qv.strip():
+                    ext_username = qv.strip()
+                    break
+            for qk in ("fullName", "full_name", "name", "displayName", "display_name"):
+                qv = request.query_params.get(qk)
+                if qv and qv.strip():
+                    ext_fullname = qv.strip()
+                    break
+            for qk in ("email", "mail", "user_email"):
+                qv = request.query_params.get(qk)
+                if qv and qv.strip():
+                    ext_email = qv.strip()
+                    break
+
         raw_cookie_keys = [
             "sso_username", "sso_user", "im_user", "userName", "user_name",
             "username", "user", "login", "account", "remote_user",
@@ -638,14 +656,16 @@ def get_current_user(
                 candidate_h = hval.strip()
                 break
 
-        ext_username = candidate_h or candidate_u or (x_user_name or x_remote_user or "").strip()
-        ext_fullname = (
-            request.headers.get("x-user-fullname") or
-            request.headers.get("x-user-displayname") or
-            request.headers.get("x-display-name") or
-            request.headers.get("x-auth-request-name") or
-            request.headers.get("x-forwarded-name") or ""
-        ).strip()
+        if not ext_username:
+            ext_username = candidate_h or candidate_u or (x_user_name or x_remote_user or "").strip()
+        if not ext_fullname:
+            ext_fullname = (
+                request.headers.get("x-user-fullname") or
+                request.headers.get("x-user-displayname") or
+                request.headers.get("x-display-name") or
+                request.headers.get("x-auth-request-name") or
+                request.headers.get("x-forwarded-name") or ""
+            ).strip()
     else:
         ext_username = (x_user_name or x_remote_user or "").strip()
 
@@ -710,12 +730,22 @@ def get_current_user(
             except Exception:
                 pass
         if user:
+            if user.username.lower() != "admin":
+                user.is_local = False
+            if ext_fullname and user.full_name != ext_fullname and user.username.lower() != "admin":
+                user.full_name = ext_fullname
             return user
+
+    has_sso_presence = bool(
+        token or (ext_username and ext_username.lower() != "admin") or ext_email or
+        (request and any(request.cookies.get(k) for k in ("sso_username", "sso_user", "im_user", "apiToken", "im-token", "auth_token", "authToken", "token") if request.cookies.get(k))) or
+        (request and hasattr(request, "query_params") and any(request.query_params.get(k) for k in ("sso_username", "sso_user", "im_user", "username", "user", "apiToken", "token", "auth_token") if request.query_params.get(k)))
+    )
 
     if x_user_id and str(x_user_id).isdigit():
         uid = int(x_user_id)
-        # If an external token was provided, do not let a default X-User-ID: 1 hijack the identity to local admin
-        if not (token and uid == 1):
+        # Never allow X-User-ID: 1 to hijack identity to local admin if any SSO presence or token exists
+        if not (uid == 1 and has_sso_presence):
             user = db.query(User).filter(User.id == uid).first()
             seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("1", "true", "yes")
             if not user and seed_demo and uid in LOCAL_PERSONAS:
@@ -729,15 +759,16 @@ def get_current_user(
                 return user
 
     if not keycloak_enabled():
-        # If an external token is present but claims couldn't be parsed, create a safe SSO enterprise user
+        # If an external token or SSO presence is present, return safe SSO enterprise user
         # rather than returning the local bootstrap admin account
-        if token:
-            sso_user = db.query(User).filter(User.username == "sso.user").first()
+        if token or has_sso_presence:
+            u_name = (ext_username and ext_username.lower() != "admin") and ext_username or "sso.user"
+            sso_user = db.query(User).filter(User.username == u_name).first()
             if not sso_user:
                 sso_user = User(
-                    username="sso.user",
-                    full_name="SSO Enterprise User",
-                    email="sso.user@enterprise.corp",
+                    username=u_name,
+                    full_name=ext_fullname or (u_name.replace(".", " ").title() if u_name != "admin" else "SSO Enterprise User"),
+                    email=ext_email or f"{u_name}@enterprise.corp",
                     role="itsm_admin",
                     is_local=False,
                     active=True

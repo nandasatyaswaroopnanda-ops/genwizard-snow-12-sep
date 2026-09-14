@@ -533,3 +533,23 @@ def test_api_token_header_and_cookie_sso_admin():
         assert data2["is_global_admin"] is True
         assert data2["is_local"] is False
 
+
+def test_query_param_and_cookie_sso_username_override_local_admin():
+    """Verify that query parameters (?username=...) and cookies (sso_username=...) correctly authenticate SSO user without admin leakage."""
+    # 1. Test ?username=john.smith even when default X-User-ID: 1 is sent
+    res_qp = client.get("/api/auth/current?username=john.smith&fullName=John%20Smith", headers={"X-User-ID": "1"})
+    assert res_qp.status_code == 200
+    data_qp = res_qp.json()
+    assert data_qp["username"] == "john.smith"
+    assert data_qp["full_name"] == "John Smith"
+    assert data_qp["is_local"] is False
+
+    # 2. Test sso_username cookie even when default X-User-ID: 1 is sent
+    res_ck = client.get("/api/auth/current", cookies={"sso_username": "jane.doe"}, headers={"X-User-ID": "1"})
+    assert res_ck.status_code == 200
+    data_ck = res_ck.json()
+    assert data_ck["username"] == "jane.doe"
+    assert data_ck["full_name"] == "Jane Doe"
+    assert data_ck["is_local"] is False
+
+
