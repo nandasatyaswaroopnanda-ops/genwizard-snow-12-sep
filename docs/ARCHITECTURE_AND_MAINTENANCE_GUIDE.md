@@ -342,18 +342,80 @@ Configure external Knowledge Management and AI copilot settings:
 ---
 
 ### 3.5 Step 5: Verify SSO Login & User Personas
-Verify both user personas work as expected:
+
+#### Enterprise Authentication & SSO Gatekeeping Flow
+To enforce zero unauthenticated access, all corporate users are authenticated at the existing Identity Management (IM) / ATR Gateway layer first:
+1. **Unauthenticated Redirect**: Anyone accessing ITSM without an active session (`apiToken`, SSO cookie, or Bearer token) is redirected to the existing Identity Management (IM) login portal.
+2. **Centralized Authentication**: The user authenticates against corporate Active Directory / LDAP in IM.
+3. **Group Inspection & Dynamic Normal User Mapping**:
+   - If the user has `itsm_admin` / `ITSM-Admins` in IM $\to$ Authenticated as **Platform Administrator** (real SSO user name displayed, e.g. `Sarah Connor`).
+   - If the user has a support DL (e.g. `Service Desk`) $\to$ Authenticated as **Support Fulfiller** for assigned project queues.
+   - If the user is **not mapped to any support or admin group** in IM $\to$ The existing IM validates their corporate authentication and post-authentication maps the default **`ATR_SAML` / `IM_SAML`** group. The user logs into ITSM as a **Normal User** (End-User) with self-service rights only.
+
+```mermaid
+flowchart TD
+    A["User navigates to ITSM Portal"] --> B{"Active IM Session / apiToken?"}
+    B -- "No (Unauthenticated)" --> C["Redirect to Identity Management (IM) Login Portal"]
+    C --> D["User logs in at IM (LDAP / AD / SSO / MFA)"]
+    D --> E["IM issues apiToken / Session Cookie & redirects back to ITSM"]
+    B -- "Yes (Authenticated)" --> F{"Has Support / Admin Groups in IM?"}
+    E --> F
+    F -- "Admin Group (itsm_admin / ITSM-Admins)" --> G["Platform Admin (Real SSO Name & Badge)"]
+    F -- "Support DL (e.g. Service Desk)" --> H["Fulfiller (Scoped to Project Queues)"]
+    F -- "No Support or Admin Group in IM" --> I["Post-Auth: Auto-Map ATR_SAML / IM_SAML Group"]
+    I --> J["Log in as Normal User (End-User)<br/>• Lands on My Tickets (#my-tickets)<br/>• Can Create Tickets & track own requests<br/>• Self-service Knowledge & AI Copilot<br/>• Admin/Queue/Settings consoles completely blocked"]
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Employee as Corporate Employee
+    participant ITSM as ITSM Portal
+    participant IM as Existing Identity Management (IM) / ATR Gateway
+    participant AD as Active Directory / LDAP
+
+    Employee->>ITSM: Accesses ITSM Portal
+    alt Unauthenticated (No Token / Session)
+        ITSM-->>Employee: 302 Redirect to IM Authentication Portal
+        Employee->>IM: Submits Credentials (SSO / MFA / LDAP)
+        IM->>AD: Verifies Corporate Identity & Active Status
+        AD-->>IM: Credentials Validated
+    end
+
+    IM->>IM: Inspects Employee Groups in IM
+    alt Employee is NOT in any ITSM Support or Admin Group
+        Note over IM,ITSM: Post-auth mapping: ATR_SAML / IM_SAML assigned
+        IM-->>ITSM: Passes authenticated user with ATR_SAML / IM_SAML
+        ITSM-->>Employee: Logs in as Normal User (End-User)
+        Note over Employee,ITSM: • Land on My Tickets (#my-tickets)<br/>• Can Create Tickets & track own requests<br/>• Self-service Knowledge & AI Copilot<br/>• Admin/Queue/Settings consoles completely blocked
+    else Employee has itsm_admin / ITSM-Admins Group
+        IM-->>ITSM: Passes authenticated user with itsm_admin
+        ITSM-->>Employee: Logs in as Platform Administrator (Real SSO Name)
+    else Employee has Support DL (e.g. Service Desk)
+        IM-->>ITSM: Passes authenticated user with Support Group
+        ITSM-->>Employee: Logs in as Fulfiller for Assigned Queues
+    end
+```
+
+#### User Persona Verification:
 1. **Admin / Support Persona:**
    - Log in with your corporate credentials as a user belonging to an `itsm_admin` or `itsm_user` DL.
+   - Verify that the top navigation and dropdown display your **actual SSO user name** (e.g. `John Smith` or `john.smith`), never impersonating local `"admin"`.
+   - Role badge displays **`Platform Administrator (SSO)`** or **`Platform Administrator`**.
    - Verify access to **Unified Tickets**, **Incidents**, **Service Requests**, **Change Requests**, **Analytics**, and **Administration**.
    - Test **Multi-Project Selection** in the filter bar &rarr; select 2+ projects &rarr; verify applications and assignment groups cascade accurately.
-2. **End-User Persona:**
-   - Log in as a regular corporate employee (belonging to `IM_SAML`).
+2. **End-User Persona (Normal User):**
+   - Log in as a regular corporate employee (belonging to or mapped to `IM_SAML` / `ATR_SAML`).
+   - Role badge displays **`End User`** with their **actual SSO user name**.
    - Verify the simplified **Service Desk** portal appears with access strictly limited to:
      - **Create Ticket**
      - **My Tickets** (can view and submit comments / work notes)
+     - **Knowledge Base** & **AI Copilot** (self-service)
      - **Applications** & **Projects**
-   - Verify restricted menus (Administration, SLA configuration, assignment queues) are completely hidden.
+   - Verify restricted menus (Administration, SLA configuration, assignment queues, management metrics) are completely hidden.
+3. **Clean Sign-Out:**
+   - Click **Sign Out** from the user dropdown.
+   - Verify all session tokens (`apiToken`, `auth_token`, `access_token`) and cookies are destroyed and the browser redirects cleanly to the application root (`/` or `/itsm/`), entirely bypassing any mock federation redirect page.
 
 ---
 
