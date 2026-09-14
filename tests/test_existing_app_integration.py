@@ -503,3 +503,33 @@ def test_user_dropdown_and_sso_admin_identity_isolation():
         assert len(local_users) == 1
         assert local_users[0]["username"] == "admin"
         assert local_users[0]["is_local"] is True
+
+
+def test_api_token_header_and_cookie_sso_admin():
+    """Verify that apiToken in header or cookie correctly authenticates SSO admin without falling back to local admin."""
+    sso_claims = {
+        "username": "alex.mercer",
+        "displayName": "Alex Mercer",
+        "email": "alex.mercer@enterprise.corp",
+        "roles": ["admin"]
+    }
+    # 1. Test apiToken in header even when client sends X-User-ID: 1
+    with patch("backend.security._extract_external_token_claims", return_value=sso_claims):
+        res = client.get("/api/auth/current", headers={"apiToken": "test_token_123", "X-User-ID": "1"})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["username"] == "alex.mercer"
+        assert data["full_name"] == "Alex Mercer"
+        assert data["is_global_admin"] is True
+        assert data["is_local"] is False
+
+    # 2. Test apiToken in cookies
+    with patch("backend.security._extract_external_token_claims", return_value=sso_claims):
+        res2 = client.get("/api/auth/current", cookies={"apiToken": "test_token_123"})
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["username"] == "alex.mercer"
+        assert data2["full_name"] == "Alex Mercer"
+        assert data2["is_global_admin"] is True
+        assert data2["is_local"] is False
+

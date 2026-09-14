@@ -31,15 +31,15 @@ server {
 
     # Clean URL & Edge SSO Redirects
     location = /sso {
-        return 302 /sso-redirect.html$is_args$args;
+        return 302 /$is_args$args;
     }
 
     location = /sso/ {
-        return 302 /sso-redirect.html$is_args$args;
+        return 302 /$is_args$args;
     }
 
     location = /login {
-        return 302 /sso-redirect.html$is_args$args;
+        return 302 /$is_args$args;
     }
 
     # Pass all clean application and API traffic to the internal API Gateway

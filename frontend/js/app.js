@@ -86,19 +86,28 @@ const ITSM_BASE_PATH = isSubpath ? '/itsm' : '';
 // Detect any active authentication token passed via URL, cookies, or existing IM storage
 function detectExternalAuthToken() {
   try {
-    // 1. URL search or hash parameters (e.g. /itsm?token=... or /itsm#access_token=...)
+    // 1. URL search or hash parameters (e.g. /itsm?apiToken=... or /itsm?token=... or /itsm#access_token=...)
     const urlParams = new URLSearchParams(window.location.search);
     const hash = window.location.hash || '';
     const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
-    const urlToken = urlParams.get('token') || urlParams.get('access_token') || urlParams.get('auth_token') || urlParams.get('jwt') || urlParams.get('id_token')
-      || hashParams.get('token') || hashParams.get('access_token') || hashParams.get('id_token');
+    const urlToken = urlParams.get('apiToken') || urlParams.get('apitoken') || urlParams.get('api_token') || urlParams.get('api-token')
+      || urlParams.get('atr-token') || urlParams.get('atr_token') || urlParams.get('im-token') || urlParams.get('im_token')
+      || urlParams.get('token') || urlParams.get('access_token') || urlParams.get('auth_token') || urlParams.get('jwt') || urlParams.get('id_token')
+      || hashParams.get('token') || hashParams.get('access_token') || hashParams.get('apiToken') || hashParams.get('id_token');
     if (urlToken && urlToken.length > 8) {
       localStorage.setItem('auth_token', urlToken);
+      localStorage.setItem('apiToken', urlToken);
       return urlToken;
     }
 
     // 2. LocalStorage keys used by external Identity Management frontends
-    const storageKeys = ['auth_token', 'access_token', 'accessToken', 'token', 'jwt', 'id_token', 'im_token', 'user_token', 'keycloak-token', 'kc-token', 'KEYCLOAK_TOKEN', 'sso_token'];
+    const storageKeys = [
+      'apiToken', 'apitoken', 'api_token', 'api-token',
+      'atr-token', 'atr_token', 'im-token', 'im_token',
+      'auth_token', 'authToken', 'access_token', 'accessToken',
+      'token', 'jwt', 'id_token', 'user_token',
+      'keycloak-token', 'kc-token', 'KEYCLOAK_TOKEN', 'sso_token'
+    ];
     for (const k of storageKeys) {
       const val = localStorage.getItem(k);
       if (val && typeof val === 'string' && val.length > 8) {
@@ -115,12 +124,12 @@ function detectExternalAuthToken() {
     }
 
     // 4. Nested tokens in user objects in localStorage/sessionStorage
-    for (const uKey of ['sso_user', 'user', 'currentUser', 'current_user', 'userInfo', 'auth', 'im_user']) {
+    for (const uKey of ['sso_user', 'user', 'currentUser', 'userInfo', 'auth', 'im_user']) {
       const raw = localStorage.getItem(uKey) || sessionStorage.getItem(uKey);
       if (raw) {
         try {
           const u = JSON.parse(raw);
-          const t = u.token || u.access_token || u.accessToken || u.jwt || u.id_token;
+          const t = u.token || u.apiToken || u.access_token || u.accessToken || u.jwt || u.id_token;
           if (t && typeof t === 'string' && t.length > 8) {
             return t;
           }
@@ -130,7 +139,7 @@ function detectExternalAuthToken() {
 
     // 5. Browser cookies
     if (typeof document !== 'undefined' && document.cookie) {
-      const m = document.cookie.match(/(?:^|;\s*)(?:auth_token|access_token|token|jwt|im_token|atr-token|Authorization|SESSION|keycloak-token|kc-token|KEYCLOAK_IDENTITY|KEYCLOAK_SESSION)=([^;]+)/i);
+      const m = document.cookie.match(/(?:^|;\s*)(?:apiToken|apitoken|api_token|api-token|atr-token|atr_token|im-token|im_token|auth_token|authToken|access_token|accessToken|token|jwt|Authorization|SESSION|sessionId|JSESSIONID|keycloak-token|kc-token|KEYCLOAK_IDENTITY|KEYCLOAK_SESSION)=([^;]+)/i);
       if (m && m[1]) {
         let cookieVal = decodeURIComponent(m[1].trim());
         if (cookieVal.toLowerCase().startsWith('bearer ')) cookieVal = cookieVal.substring(7).trim();
@@ -147,21 +156,18 @@ function detectExternalAuthToken() {
 var _storedUser = null;
 try {
   var _rawStored = typeof localStorage !== 'undefined' ? localStorage.getItem('current_user') : null;
-  if (_rawStored) _storedUser = JSON.parse(_rawStored);
+  if (_rawStored) {
+    var _parsed = JSON.parse(_rawStored);
+    // If an external token or SSO session is active, do NOT let a stale local admin user overwrite it
+    var _hasSso = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('sso_username') || !!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')));
+    if (!_hasSso || (_parsed && _parsed.username && _parsed.username.toLowerCase() !== 'admin')) {
+      _storedUser = _parsed;
+    }
+  }
 } catch (_) {}
 
 var state = {
-  currentUser: _storedUser || {
-    id: 1,
-    username: 'admin',
-    full_name: 'admin',
-    role: 'itsm_admin',
-    is_global_admin: true,
-    is_end_user: false,
-    admin_projects: [],
-    support_projects: [],
-    custom_groups: []
-  },
+  currentUser: _storedUser || null,
   allUsers: [],
   allAssignmentGroups: [],
   currentRoute: 'dashboard',
@@ -177,15 +183,15 @@ var state = {
 };
 if (typeof window !== 'undefined') window.state = state;
 
-// Global fetch interceptor: automatically attaches Bearer token & X-User-ID to all API calls
+// Global fetch interceptor: automatically attaches Bearer token, apiToken & X-User-ID to all API calls
 if (typeof window !== 'undefined' && window.fetch) {
   const _rawFetch = window.fetch.bind(window);
   window.fetch = function(resource, init) {
     init = init || {};
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || detectExternalAuthToken();
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken') || detectExternalAuthToken();
     const currentId = (state && state.currentUser && state.currentUser.id)
       ? state.currentUser.id.toString()
-      : (localStorage.getItem('nexus_user_id') || '1');
+      : (localStorage.getItem('nexus_user_id') || '');
     
     let headers;
     if (init.headers instanceof Headers) {
@@ -198,10 +204,15 @@ if (typeof window !== 'undefined' && window.fetch) {
       headers = new Headers();
     }
 
-    if (token && !headers.has('Authorization')) {
-      headers.set('Authorization', `Bearer ${token}`);
+    if (token) {
+      if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+      if (!headers.has('apiToken')) headers.set('apiToken', token);
+      if (!headers.has('X-API-Token')) headers.set('X-API-Token', token);
     }
-    if (currentId && !headers.has('X-User-ID')) {
+    if (state && state.currentUser && state.currentUser.username) {
+      if (!headers.has('X-User-Name')) headers.set('X-User-Name', state.currentUser.username);
+    }
+    if (currentId && !headers.has('X-User-ID') && (!token || currentId !== '1')) {
       headers.set('X-User-ID', currentId);
     }
     init.headers = headers;
@@ -699,7 +710,7 @@ function toggleTheme() {
 // --- USER / PERSONA SWITCHING ---
 async function loadCurrentUser() {
   const detectedToken = detectExternalAuthToken();
-  const authToken = detectedToken || localStorage.getItem('auth_token') || localStorage.getItem('access_token') || '';
+  const authToken = detectedToken || localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken') || '';
   if (authToken && !localStorage.getItem('auth_token')) {
     localStorage.setItem('auth_token', authToken);
   }
@@ -708,26 +719,39 @@ async function loadCurrentUser() {
   let ssoUser = null;
 
   // Check URL query parameters
-  if (typeof window !== 'undefined' && window.location && window.location.search) {
+  if (typeof window !== 'undefined' && window.location) {
     const sp = new URLSearchParams(window.location.search);
-    const qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('im_user');
-    if (qUser) {
-      ssoUser = { username: qUser, full_name: qUser === 'admin' ? 'admin' : qUser.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+    const hash = window.location.hash || '';
+    const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
+    const qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('sso_username') || sp.get('im_user') || sp.get('login')
+      || hashParams.get('username') || hashParams.get('user') || hashParams.get('im_user');
+    if (qUser && qUser.length > 0 && qUser.length < 60) {
+      ssoUser = {
+        username: qUser,
+        full_name: qUser === 'admin' ? 'admin' : qUser.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        is_local: false
+      };
       localStorage.setItem('sso_username', qUser);
     }
   }
 
   // Check cookies for external IM identity
   if (!ssoUser && typeof document !== 'undefined' && document.cookie) {
-    const cookieMatch = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|username|user)=([^;]+)/i);
+    const cookieMatch = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|sso_user|username|user|userName|user_name|login|account|remote_user)=([^;]+)/i);
     if (cookieMatch && cookieMatch[1]) {
       const cUname = decodeURIComponent(cookieMatch[1].trim());
       if (cUname && cUname.length > 0 && cUname.length < 60) {
         try {
           const parsed = JSON.parse(cUname);
-          if (parsed && (parsed.username || parsed.name || parsed.full_name)) ssoUser = parsed;
+          if (parsed && (parsed.username || parsed.name || parsed.full_name)) {
+            ssoUser = { ...parsed, is_local: false };
+          }
         } catch (_) {
-          ssoUser = { username: cUname, full_name: cUname === 'admin' ? 'admin' : cUname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+          ssoUser = {
+            username: cUname,
+            full_name: cUname === 'admin' ? 'admin' : cUname.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            is_local: false
+          };
         }
       }
     }
@@ -739,16 +763,17 @@ async function loadCurrentUser() {
       const parts = authToken.split('.');
       if (parts.length >= 2) {
         const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        const uname = payload.preferred_username || payload.username || payload.sub || payload.login;
-        const fname = payload.name || payload.full_name || payload.displayName;
+        const uname = payload.preferred_username || payload.username || payload.userName || payload.sub || payload.login;
+        const fname = payload.name || payload.full_name || payload.displayName || payload.fullName;
         const mail = payload.email || payload.mail;
         if (uname || fname) {
           ssoUser = {
             id: payload.user_id || payload.userId || (payload.sub && /^\d+$/.test(payload.sub) ? parseInt(payload.sub) : undefined),
             username: uname || (fname ? fname.toLowerCase().replace(/\s+/g, '.') : 'user'),
-            full_name: uname === 'admin' ? 'admin' : (fname || (uname ? uname.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'User')),
+            full_name: uname === 'admin' ? 'admin' : (fname || (uname ? uname.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'User')),
             email: mail,
-            role: payload.role || 'itsm_user'
+            role: payload.role || (payload.roles && payload.roles.includes('admin') ? 'itsm_admin' : 'itsm_read'),
+            is_local: false
           };
         }
       }
@@ -760,7 +785,11 @@ async function loadCurrentUser() {
     for (const pk of ['sso_username', 'username']) {
       const pVal = localStorage.getItem(pk) || sessionStorage.getItem(pk);
       if (pVal && typeof pVal === 'string' && pVal.length > 0 && pVal.length < 60) {
-        ssoUser = { username: pVal, full_name: pVal === 'admin' ? 'admin' : pVal.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()) };
+        ssoUser = {
+          username: pVal,
+          full_name: pVal === 'admin' ? 'admin' : pVal.split('@')[0].replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          is_local: false
+        };
         break;
       }
     }
@@ -768,14 +797,15 @@ async function loadCurrentUser() {
 
   // Check JSON storage keys
   if (!ssoUser) {
-    const userKeys = ['sso_user', 'current_user', 'user', 'currentUser', 'userInfo', 'im_user'];
+    const userKeys = ['sso_user', 'im_user', 'user', 'currentUser', 'userInfo'];
     for (const k of userKeys) {
       try {
         const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
         if (raw) {
           const u = JSON.parse(raw);
           if (u && (u.username || u.name || u.full_name)) {
-            ssoUser = u;
+            if (authToken && u.username === 'admin' && u.id === 1) continue;
+            ssoUser = { ...u, is_local: false };
             break;
           }
         }
@@ -792,6 +822,8 @@ async function loadCurrentUser() {
   const headers = {};
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
+    headers['apiToken'] = authToken;
+    headers['X-API-Token'] = authToken;
   }
 
   if (ssoUser) {
@@ -799,7 +831,8 @@ async function loadCurrentUser() {
     if (ssoUser.username) headers['X-User-Name'] = ssoUser.username;
     if (ssoUser.full_name) headers['X-User-Fullname'] = ssoUser.full_name;
     if (ssoUser.email) headers['X-User-Email'] = ssoUser.email;
-  } else {
+    if (ssoUser.role) headers['X-User-Role'] = ssoUser.role;
+  } else if (!authToken) {
     const savedUserId = localStorage.getItem('nexus_user_id') || localStorage.getItem('active_user_id');
     if (savedUserId && savedUserId !== '1') {
       headers['X-User-ID'] = savedUserId;
@@ -823,11 +856,20 @@ async function loadCurrentUser() {
             role: ssoUser.role || backendUser.role,
             is_local: false
           };
+        } else if (authToken && backendUser.id === 1 && backendUser.username === 'admin') {
+          state.currentUser = {
+            ...backendUser,
+            username: (ssoUser && ssoUser.username) || 'sso.user',
+            full_name: (ssoUser && ssoUser.full_name) || 'SSO Enterprise User',
+            is_global_admin: backendUser.is_global_admin,
+            role: (ssoUser && ssoUser.role) || backendUser.role,
+            is_local: false
+          };
         } else {
           state.currentUser = backendUser;
         }
         localStorage.setItem('current_user', JSON.stringify(state.currentUser));
-        if (state.currentUser.id) {
+        if (state.currentUser.id && state.currentUser.is_local) {
           localStorage.setItem('nexus_user_id', String(state.currentUser.id));
         }
         updateUserUI();
@@ -1015,10 +1057,11 @@ function getUserDisplayName(user) {
   const uname = (user.username || '').toLowerCase().trim();
   const fname = (user.full_name || user.name || '').trim();
 
-  // Check if an SSO session is active
+  // Check if an SSO session or external token is active
   const ssoUname = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_username') || '') : '').toLowerCase().trim();
   const ssoUserRaw = (typeof localStorage !== 'undefined' ? (localStorage.getItem('sso_user') || '') : '');
-  const hasSsoSession = !!(ssoUname || ssoUserRaw) || (typeof user.is_local === 'boolean' && user.is_local === false);
+  const hasExtToken = (typeof localStorage !== 'undefined' ? (!!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')) : false);
+  const hasSsoSession = !!(ssoUname || ssoUserRaw || hasExtToken) || (typeof user.is_local === 'boolean' && user.is_local === false);
 
   // Local bootstrap admin check: ONLY the actual local user 'admin' displays as 'admin'
   const isActualLocalAdmin = (uname === 'admin' || uname === 'administrator') &&
@@ -1096,7 +1139,7 @@ function renderUserSwitcherDropdown() {
   const container = document.getElementById('usersListContainer');
   if (!container) return;
 
-  const ssoActive = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('sso_username'))) ||
+  const ssoActive = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('sso_user') || !!localStorage.getItem('sso_username') || !!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken'))) ||
     (state.currentUser && (!state.currentUser.is_local || (state.currentUser.username && state.currentUser.username.toLowerCase() !== 'admin')));
 
   let usersToDisplay = (state.allUsers && state.allUsers.length) ? state.allUsers.slice() : [state.currentUser];
@@ -1183,14 +1226,31 @@ function toggleUserDropdown() {
 function userSignOut() {
   localStorage.removeItem('auth_token');
   localStorage.removeItem('access_token');
+  localStorage.removeItem('apiToken');
+  localStorage.removeItem('api_token');
   localStorage.removeItem('current_user');
   localStorage.removeItem('sso_user');
   localStorage.removeItem('sso_username');
   localStorage.removeItem('active_user_id');
   localStorage.removeItem('nexus_user_id');
+  try { sessionStorage.clear(); } catch (_) {}
+
+  // Expire cookies
+  if (typeof document !== 'undefined') {
+    const cKeys = [
+      'auth_token', 'access_token', 'apiToken', 'api_token', 'im-token', 'im_token',
+      'atr-token', 'atr_token', 'token', 'jwt', 'sessionId', 'JSESSIONID', 'SESSION',
+      'im_user', 'sso_username', 'sso_user', 'username', 'user', 'currentUser'
+    ];
+    for (const ck of cKeys) {
+      document.cookie = `${ck}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;`;
+      document.cookie = `${ck}=; Path=/itsm; Expires=Thu, 01 Jan 1970 00:00:01 GMT;`;
+    }
+  }
+
   toggleUserDropdown();
   const isSubpath = window.location.pathname.startsWith('/itsm');
-  window.location.href = isSubpath ? '/itsm/sso-redirect.html' : '/sso-redirect.html';
+  window.location.href = isSubpath ? '/itsm/' : '/';
 }
 window.userSignOut = userSignOut;
 

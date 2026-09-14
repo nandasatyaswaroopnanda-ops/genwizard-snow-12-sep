@@ -20,16 +20,19 @@
   try {
     var u = null;
 
-    // Check query parameters: ?username=... or ?user=...
-    if (typeof window !== 'undefined' && window.location && window.location.search) {
+    // Check query parameters: ?username=... or ?user=... or hash
+    if (typeof window !== 'undefined' && window.location) {
       var sp = new URLSearchParams(window.location.search);
-      var qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('im_user');
+      var hash = window.location.hash || '';
+      var hp = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
+      var qUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('sso_username') || sp.get('im_user') || sp.get('login')
+        || hp.get('username') || hp.get('user');
       if (qUser) u = { username: qUser };
     }
 
-    // Check cookies: im_user, sso_username, username, user
+    // Check cookies: im_user, sso_username, sso_user, username, user, userName, user_name, login, account
     if (!u && typeof document !== 'undefined' && document.cookie) {
-      var cm = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|username|user)=([^;]+)/i);
+      var cm = document.cookie.match(/(?:^|;\s*)(?:im_user|sso_username|sso_user|username|user|userName|user_name|login|account)=([^;]+)/i);
       if (cm && cm[1]) {
         var cUser = decodeURIComponent(cm[1].trim());
         if (cUser) {
@@ -40,13 +43,13 @@
 
     // Check token claims if present
     if (!u && typeof localStorage !== 'undefined') {
-      var tok = localStorage.getItem('auth_token') || localStorage.getItem('access_token');
+      var tok = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken');
       if (tok && tok.indexOf('.') !== -1) {
         try {
           var payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
           if (payload) {
             u = {
-              username: payload.preferred_username || payload.username || payload.sub,
+              username: payload.preferred_username || payload.username || payload.userName || payload.sub || payload.login,
               full_name: payload.name || payload.full_name || payload.displayName,
               email: payload.email
             };
@@ -62,7 +65,8 @@
     }
 
     if (!u) {
-      var raw = localStorage.getItem('sso_user') || localStorage.getItem('current_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo');
+      var hasExt = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')));
+      var raw = localStorage.getItem('sso_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo') || (!hasExt ? localStorage.getItem('current_user') : null);
       if (raw) {
         try { u = JSON.parse(raw); } catch (_) {
           if (typeof raw === 'string' && raw.length < 60) u = { username: raw };
@@ -73,13 +77,13 @@
     if (u && (u.username || u.name || u.full_name)) {
       var uname = (u.username || '').toLowerCase().trim();
       var fname = (u.full_name || u.name || '').trim();
-      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user'));
+      var ssoActive = !!(localStorage.getItem('sso_username') || localStorage.getItem('sso_user') || localStorage.getItem('auth_token') || localStorage.getItem('apiToken'));
       var isLocalAdmin = (uname === 'admin' || uname === 'administrator') && (u.is_local === true || u.id === 1) && !ssoActive;
       var displayName = isLocalAdmin
         ? 'admin'
         : (fname && fname !== 'SSO Enterprise User' && fname !== 'Admin User' && fname !== 'Administrator' && fname.toLowerCase() !== 'admin'
             ? fname
-            : (u.username && u.username !== 'admin' ? u.username : (fname || 'User')));
+            : (u.username && u.username !== 'admin' ? (u.username.includes('.') ? u.username.replace('.', ' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); }) : u.username) : (fname || 'User')));
 
       var initials = (displayName === 'admin')
         ? 'AD'

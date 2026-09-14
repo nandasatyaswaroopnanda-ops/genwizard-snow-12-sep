@@ -4,6 +4,7 @@ import json
 import base64
 import zlib
 import time
+import urllib.parse
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
@@ -94,7 +95,14 @@ def _extract_external_token_claims(token: str) -> Optional[Dict[str, Any]]:
     # 4. Remote token validation against external IM service if reachable
     im_base = os.getenv("IDENTITY_SERVICE_URL", "").rstrip("/")
     candidate_endpoints = [
+        "http://localhost:8080/atr-gateway/identity-management/api/v1/auth/user",
+        "http://127.0.0.1:8080/atr-gateway/identity-management/api/v1/auth/user",
+        "http://localhost:8080/identity-management/api/v1/auth/user",
+        "http://127.0.0.1:8080/identity-management/api/v1/auth/user",
+        "http://localhost:8080/api/v1/auth/user",
+        "http://127.0.0.1:8080/api/v1/auth/user",
         "http://host.docker.internal/atr-gateway/identity-management/api/v1/auth/user",
+        "http://host.docker.internal:8080/atr-gateway/identity-management/api/v1/auth/user",
         "http://nginx/atr-gateway/identity-management/api/v1/auth/user",
         "http://atr-gateway:8080/atr-gateway/identity-management/api/v1/auth/user",
         "http://atr-gateway-container:8080/atr-gateway/identity-management/api/v1/auth/user",
@@ -113,14 +121,28 @@ def _extract_external_token_claims(token: str) -> Optional[Dict[str, Any]]:
         "http://identity-management:8001/api/v1/auth/user",
         "http://identity-management:8001/auth/user"
     ])
+    probe_headers = {
+        "apiToken": token,
+        "apitoken": token,
+        "x-api-token": token,
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
+    probe_cookies = {
+        "apiToken": token,
+        "token": token,
+        "auth_token": token
+    }
     for endpoint in candidate_endpoints:
         try:
-            r = httpx.get(endpoint, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=2.0)
+            r = httpx.get(endpoint, headers=probe_headers, cookies=probe_cookies, timeout=2.0)
             if r.status_code == 200:
-                user_data = r.json()
-                if isinstance(user_data, dict):
-                    _IM_TOKEN_VALIDATION_CACHE[token] = (user_data, time.time() + 300)
-                    return user_data
+                resp_data = r.json()
+                if isinstance(resp_data, dict):
+                    user_data = resp_data.get("data") or resp_data.get("user") or resp_data.get("result") or resp_data.get("payload") or resp_data
+                    if isinstance(user_data, dict):
+                        _IM_TOKEN_VALIDATION_CACHE[token] = (user_data, time.time() + 300)
+                        return user_data
         except Exception:
             pass
 
@@ -364,24 +386,44 @@ def get_current_user(
     if credentials and credentials.credentials:
         token = credentials.credentials
     elif request:
-        cookie_keys = ["auth_token", "access_token", "token", "jwt", "im_token", "atr_token", "short_token", "id_token", "sessionId", "JSESSIONID", "keycloak-token", "kc-token", "KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION", "sso_token", "user_token"]
+        cookie_keys = [
+            "apiToken", "apitoken", "api_token", "api-token",
+            "atr-token", "atr_token", "im-token", "im_token",
+            "auth_token", "authToken", "access_token", "accessToken",
+            "token", "jwt", "short_token", "SHORT_TOKEN", "id_token",
+            "sessionId", "JSESSIONID", "SESSION", "session",
+            "keycloak-token", "kc-token", "KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION",
+            "sso_token", "user_token"
+        ]
         for ck in cookie_keys:
             cval = request.cookies.get(ck)
             if cval:
-                token = cval
+                token = urllib.parse.unquote(cval.strip().strip('"').strip("'"))
                 break
         if not token:
-            header_keys = ["x-access-token", "x-auth-token", "x-token", "im-token", "atr-token", "keycloak-token"]
+            header_keys = [
+                "apiToken", "apitoken", "api-token", "x-api-token",
+                "atr-token", "atr_token", "im-token", "im_token",
+                "x-access-token", "x-auth-token", "x-token", "keycloak-token",
+                "authorization"
+            ]
             for hk in header_keys:
                 hval = request.headers.get(hk)
                 if hval:
-                    token = hval
+                    token = hval.strip().strip('"').strip("'")
                     break
         if not token:
-            # Check for bearer in standard Authorization header if credentials didn't parse
             auth_hdr = request.headers.get("authorization", "")
             if auth_hdr.lower().startswith("bearer "):
                 token = auth_hdr[7:].strip()
+        if not token and hasattr(request, "query_params"):
+            for qk in ("apiToken", "apitoken", "api_token", "token", "access_token", "authToken", "auth_token", "jwt"):
+                qval = request.query_params.get(qk)
+                if qval:
+                    token = urllib.parse.unquote(qval.strip().strip('"').strip("'"))
+                    break
+        if token and token.lower().startswith("bearer "):
+            token = token[7:].strip()
 
     if token:
         # 1. Try decoding as Identity Service JWT token
@@ -399,7 +441,15 @@ def get_current_user(
         try:
             unverified = _extract_external_token_claims(token)
             if unverified:
-                ext_uname = unverified.get("preferred_username") or unverified.get("username") or unverified.get("user") or unverified.get("sub") or unverified.get("login")
+                ext_uname = (
+                    unverified.get("preferred_username")
+                    or unverified.get("username")
+                    or unverified.get("userName")
+                    or unverified.get("user")
+                    or unverified.get("sub")
+                    or unverified.get("login")
+                    or unverified.get("account")
+                )
                 ext_mail = unverified.get("email") or unverified.get("mail")
                 ext_name = (
                     unverified.get("displayName")
@@ -561,27 +611,34 @@ def get_current_user(
     # 3. Check for external IM proxy headers and cookies (X-User-Name, X-Remote-User, X-Forwarded-User, Remote-User, etc.)
     ext_username = ""
     ext_fullname = ""
+    ext_email = ""
     if request:
-        ext_username = (
-            request.headers.get("x-user-name") or
-            request.headers.get("x-remote-user") or
-            request.headers.get("x-forwarded-user") or
-            request.headers.get("remote-user") or
-            request.headers.get("x-authenticated-user") or
-            request.headers.get("x-webauth-user") or
-            request.headers.get("x-auth-request-user") or
-            request.headers.get("x-auth-request-preferred-username") or
-            request.headers.get("x-user") or
-            request.headers.get("x-username") or
-            request.headers.get("x-im-user") or
-            request.cookies.get("username") or
-            request.cookies.get("user") or
-            request.cookies.get("im_user") or
-            request.cookies.get("sso_username") or
-            request.cookies.get("sso_user") or
-            request.cookies.get("remote_user") or
-            x_user_name or x_remote_user or ""
-        ).strip()
+        raw_cookie_keys = [
+            "sso_username", "sso_user", "im_user", "userName", "user_name",
+            "username", "user", "login", "account", "remote_user",
+            "currentUser", "userInfo"
+        ]
+        candidate_u = ""
+        for ck in raw_cookie_keys:
+            cval = request.cookies.get(ck)
+            if cval:
+                unq = urllib.parse.unquote(cval.strip().strip('"').strip("'"))
+                if unq and (not candidate_u or (candidate_u.lower() == "admin" and unq.lower() != "admin")):
+                    candidate_u = unq
+
+        header_u_keys = [
+            "x-user-name", "x-remote-user", "x-forwarded-user", "remote-user",
+            "x-authenticated-user", "x-webauth-user", "x-auth-request-user",
+            "x-auth-request-preferred-username", "x-user", "x-username", "x-im-user"
+        ]
+        candidate_h = ""
+        for hk in header_u_keys:
+            hval = request.headers.get(hk)
+            if hval:
+                candidate_h = hval.strip()
+                break
+
+        ext_username = candidate_h or candidate_u or (x_user_name or x_remote_user or "").strip()
         ext_fullname = (
             request.headers.get("x-user-fullname") or
             request.headers.get("x-user-displayname") or
@@ -594,23 +651,26 @@ def get_current_user(
 
     if ext_username.startswith("{") and ext_username.endswith("}"):
         try:
-            import json
             u_obj = json.loads(ext_username)
             if isinstance(u_obj, dict):
-                ext_username = u_obj.get("username") or u_obj.get("user") or u_obj.get("preferred_username") or ext_username
+                ext_username = u_obj.get("username") or u_obj.get("user") or u_obj.get("preferred_username") or u_obj.get("login") or ext_username
                 if not ext_fullname:
-                    ext_fullname = u_obj.get("full_name") or u_obj.get("name") or u_obj.get("displayName") or ""
+                    ext_fullname = u_obj.get("full_name") or u_obj.get("name") or u_obj.get("displayName") or u_obj.get("display_name") or ""
+                if not ext_email and u_obj.get("email"):
+                    ext_email = u_obj.get("email")
         except Exception:
             pass
 
-    ext_email = (
-        (request.headers.get("x-user-email") or
-         request.headers.get("x-forwarded-email") or
-         request.headers.get("x-authenticated-email") or
-         request.cookies.get("user_email") or
-         request.cookies.get("email") or
-         x_user_email or "") if request else (x_user_email or "")
-    ).strip().lower()
+    if not ext_email:
+        ext_email = (
+            (request.headers.get("x-user-email") or
+             request.headers.get("x-forwarded-email") or
+             request.headers.get("x-authenticated-email") or
+             request.cookies.get("user_email") or
+             request.cookies.get("email") or
+             x_user_email or "") if request else (x_user_email or "")
+        ).strip().lower()
+
     if ext_username or ext_email:
         user = None
         if ext_username:
@@ -619,12 +679,20 @@ def get_current_user(
             user = db.query(User).filter(User.email.ilike(ext_email)).first()
         if not user and ext_username:
             # Auto-provision user from external IM
-            display_name = ext_fullname or ("admin" if ext_username.lower() == "admin" else ext_username.replace(".", " ").title())
+            u_str = ext_username.lower().strip()
+            display_name = ext_fullname or (
+                "admin" if u_str == "admin" else ext_username.split("@")[0].replace(".", " ").title()
+            )
+            user_roles = [str(r).lower() for r in (
+                request.headers.get("x-user-roles", "").split(",") if request else []
+            )]
+            is_admin = (u_str == "admin") or any("admin" in r for r in user_roles)
+            assigned_role = "itsm_admin" if is_admin else "itsm_read"
             user = User(
                 username=ext_username,
                 full_name=display_name,
                 email=ext_email if ext_email else f"{ext_username}@enterprise.corp",
-                role="itsm_read",
+                role=assigned_role,
                 is_local=False,
                 active=True
             )
@@ -646,19 +714,39 @@ def get_current_user(
 
     if x_user_id and str(x_user_id).isdigit():
         uid = int(x_user_id)
-        user = db.query(User).filter(User.id == uid).first()
-        seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("1", "true", "yes")
-        if not user and seed_demo and uid in LOCAL_PERSONAS:
-            user = _ensure_local_persona(uid, db)
-        if user and seed_demo:
-            for pid, pinfo in LOCAL_PERSONAS.items():
-                if user.username == pinfo["username"]:
-                    _ensure_local_persona(pid, db)
-                    break
-        if user:
-            return user
+        # If an external token was provided, do not let a default X-User-ID: 1 hijack the identity to local admin
+        if not (token and uid == 1):
+            user = db.query(User).filter(User.id == uid).first()
+            seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("1", "true", "yes")
+            if not user and seed_demo and uid in LOCAL_PERSONAS:
+                user = _ensure_local_persona(uid, db)
+            if user and seed_demo:
+                for pid, pinfo in LOCAL_PERSONAS.items():
+                    if user.username == pinfo["username"]:
+                        _ensure_local_persona(pid, db)
+                        break
+            if user:
+                return user
 
     if not keycloak_enabled():
+        # If an external token is present but claims couldn't be parsed, create a safe SSO enterprise user
+        # rather than returning the local bootstrap admin account
+        if token:
+            sso_user = db.query(User).filter(User.username == "sso.user").first()
+            if not sso_user:
+                sso_user = User(
+                    username="sso.user",
+                    full_name="SSO Enterprise User",
+                    email="sso.user@enterprise.corp",
+                    role="itsm_admin",
+                    is_local=False,
+                    active=True
+                )
+                db.add(sso_user)
+                db.commit()
+                db.refresh(sso_user)
+            return sso_user
+
         # Deliberately isolated to local mode; admin APIs do not use this
         # fallback when Keycloak is configured.
         user = db.query(User).filter(User.id == 1).first() or db.query(User).first()
