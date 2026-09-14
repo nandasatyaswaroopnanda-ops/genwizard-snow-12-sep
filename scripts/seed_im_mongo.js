@@ -1,28 +1,7 @@
-// ==============================================================================
-// Genwizard ITSM — Native mongosh Seed Script for Identity Management & atr-mongo
-// ==============================================================================
-// Usage:
-//   docker exec -i atr-mongo mongosh -u atr -p <password> --authenticationDatabase admin < scripts/seed_im_mongo.js
-// Or from inside mongosh:
-//   load("scripts/seed_im_mongo.js")
-// ==============================================================================
-
-// ==============================================================================
-// 1. STRICT IDENTITY-MANAGEMENT DATABASE IDENTIFICATION & VERIFICATION
-// ==============================================================================
-// Identity-Management in atr-mongo contains exact collections:
-// - aDGroup, application, dbchnagelog, failedAuthentiation, group,
-// - jwtpublickey, mongobeelock, passwordHistory, permission, session,
-// - user, userIdentityProviderGroups
-//
-// Rules:
-// 1. Strictly target the identity-management database only.
-// 2. Check that the signature collections exist.
-// 3. ONLY if those collections are present, add ITSM groups/permissions.
-// ==============================================================================
-
-let imDatabaseName = "";
-const knownCandidateNames = ["identity-management", "identity_management", "im", "aaam-atr-v3", "aaam"];
+// Production Enforcement: Zero seed data in MongoDB strictly enforced
+print("  ✓ Production mode: Zero seed data in MongoDB strictly enforced.");
+print("  ✓ Skipping Mongo seed execution (0 seed documents inserted into MongoDB).");
+quit(0);
 
 try {
   const adminDb = db.getSiblingDB("admin");

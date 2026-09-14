@@ -321,16 +321,9 @@ done
 echo "==> Synchronizing IM groups, ATR_SAML/IM_SAML & admin privileges..."
 sleep 2
 
-# 6a. Direct seed execution inside MongoDB container (strictly atr-mongo) via docker exec
+# 6a. MongoDB Production Verification (Strict Zero-Seed Policy)
 if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -v 'mlcore' | grep -qE "^${MONGO_CONTAINER}$"; then
-  if [[ -f "$APP_DIR/scripts/seed_im_mongo.js" && -n "${MONGO_PASSWORD:-}" ]]; then
-    echo "  -> Executing direct database seed inside '${MONGO_CONTAINER}' via docker exec..."
-    if docker exec -i "$MONGO_CONTAINER" mongosh -u "${MONGO_USERNAME:-atr}" -p "$MONGO_PASSWORD" --authenticationDatabase admin < "$APP_DIR/scripts/seed_im_mongo.js" >/dev/null 2>&1; then
-      echo "  ✓ Direct mongosh seed execution inside '${MONGO_CONTAINER}' succeeded."
-    elif docker exec -i "$MONGO_CONTAINER" mongo -u "${MONGO_USERNAME:-atr}" -p "$MONGO_PASSWORD" --authenticationDatabase admin < "$APP_DIR/scripts/seed_im_mongo.js" >/dev/null 2>&1; then
-      echo "  ✓ Direct mongo seed execution inside '${MONGO_CONTAINER}' succeeded."
-    fi
-  fi
+  echo "  ✓ MongoDB container '${MONGO_CONTAINER}' verified. Enforcing zero-seed policy (zero seed documents inserted into Mongo)."
 fi
 
 # 6b. Bootstrap synchronization inside nexus-itsm-core container

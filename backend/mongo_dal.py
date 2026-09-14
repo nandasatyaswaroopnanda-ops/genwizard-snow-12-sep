@@ -976,25 +976,12 @@ class MongoSession:
 
 # ── Dependency Injector & Session Factory ──
 
-_seeded = False
-def ensure_seeded():
-    global _seeded
-    if not _seeded:
-        db = get_mongo_db()
-        if db["users"].count_documents({}) == 0:
-            _seeded = True
-            try:
-                from backend.seed_data import init_db_and_seed
-                init_db_and_seed()
-            except Exception as e:
-                logger.warning("Auto-seed error: %s", e)
-
 def SessionLocal() -> MongoSession:
-    ensure_seeded()
+    """Production ready: returns clean MongoSession with zero auto-seeding."""
     return MongoSession()
 
 def get_db():
-    ensure_seeded()
+    """Dependency provider for FastAPI routes with zero auto-seeding."""
     session = MongoSession()
     try:
         yield session

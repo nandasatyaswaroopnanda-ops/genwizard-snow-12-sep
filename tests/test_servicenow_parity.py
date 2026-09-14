@@ -129,8 +129,13 @@ def test_export_column_filtering(client):
         assert set(data[0].keys()) == {"Incident Number", "Status"}
 
 def test_group_eligible_assignees_excludes_end_users(client):
-    # Fetch assignees for support group 1
-    res = client.get("/api/admin/groups/1/assignees", headers={"X-User-ID": "1"})
+    # Fetch active support groups
+    groups_res = client.get("/api/admin/groups", headers={"X-User-ID": "1"})
+    assert groups_res.status_code == 200
+    groups = groups_res.json()
+    assert len(groups) > 0
+    group_id = groups[0]["id"]
+    res = client.get(f"/api/admin/groups/{group_id}/assignees", headers={"X-User-ID": "1"})
     assert res.status_code == 200
     assignees = res.json()
     assert isinstance(assignees, list)
