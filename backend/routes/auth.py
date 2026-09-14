@@ -49,4 +49,5 @@ def get_current_user(
     data["assignment_group_ids"] = group_ids
     from backend.security import get_user_project_boundaries
     data["project_boundaries"] = get_user_project_boundaries(current_user, db)
+    data["enterprise_name"] = os.getenv("ENTERPRISE_NAME", os.getenv("ACCENTURE_ENTERPRISE_NAME", "Accenture Enterprise"))
     return data

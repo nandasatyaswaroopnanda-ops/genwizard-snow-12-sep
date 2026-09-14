@@ -146,6 +146,7 @@ class User(Base):
             "admin_projects": admin_projects,
             "support_projects": support_projects,
             "custom_groups": c_groups,
+            "enterprise_name": os.getenv("ENTERPRISE_NAME", os.getenv("ACCENTURE_ENTERPRISE_NAME", "Accenture Enterprise")),
             "active": self.active,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }

@@ -1111,17 +1111,26 @@ function updateNavVisibilityForRole() {
 
 function formatUserEmail(u) {
   if (!u) return '';
+  const entName = (u.enterprise_name || (typeof window !== 'undefined' && window.__ENTERPRISE_NAME) || 'Accenture Enterprise');
+  const uname = (u.username || '').trim().toLowerCase();
   let email = (u.email || '').trim();
-  const uname = (u.username || '').trim();
+
+  // If local admin or dummy admin email: display enterprise name instead of @company.com
+  if (uname === 'admin' || email === 'admin@company.com' || email === 'admin@accenture.com') {
+    return entName;
+  }
+
+  // If email has generic @company.com, display enterprise name
+  if (email.toLowerCase().endsWith('@company.com')) {
+    return entName;
+  }
 
   // If email is empty, check if username is already an email
   if (!email) {
     if (uname.includes('@')) {
       email = uname;
-    } else if (uname && uname.toLowerCase() !== 'admin') {
-      email = `${uname}@accenture.com`;
-    } else if (uname.toLowerCase() === 'admin') {
-      email = 'admin@company.com';
+    } else {
+      return entName;
     }
   }
 
@@ -1134,7 +1143,7 @@ function formatUserEmail(u) {
     email = email.replace(/(@enterprise\.corp|@enterprise\.org)$/i, '@accenture.com');
   }
 
-  return email;
+  return email || entName;
 }
 
 function getUserDisplayName(user) {
