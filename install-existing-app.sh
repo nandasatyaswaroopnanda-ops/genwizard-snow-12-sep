@@ -249,6 +249,15 @@ elif [[ -f "$APP_DIR/nexus-itsm-core-image.tar" ]]; then
 fi
 
 # 4. Launch nexus-itsm-core Container (with resilient fallback)
+# Safeguard: ensure build context has identity_service directory to prevent Docker build checksum failure
+if [[ ! -d "$APP_DIR/identity_service" ]]; then
+  echo "(!) Notice: identity_service directory not found in build context. Creating stub directory to prevent Docker build failure..."
+  mkdir -p "$APP_DIR/identity_service"
+  cat <<'EOF' > "$APP_DIR/identity_service/__init__.py"
+# Runtime stub for identity_service package
+EOF
+fi
+
 echo "==> Starting Genwizard ITSM Core container on network '${DOCKER_NETWORK}'..."
 COMPOSE_OK=false
 

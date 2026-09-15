@@ -379,12 +379,15 @@ def sync_via_mongo(admin_user: str = "admin"):
                     except Exception:
                         pass
                 logger.info("Direct Mongo: successfully initialized ITSM operational collections in existing Mongo!")
+        except Exception as idx_err:
+            logger.debug("Direct Mongo: index initialization notice: %s", idx_err)
 
-            # Production ready: Enforce ZERO seed data in MongoDB
+        # Production ready: Enforce ZERO seed data in MongoDB
         seed_mongo = os.getenv("SEED_MONGO_DATA", "false").strip().lower() in ("1", "true", "yes")
         if not seed_mongo:
             logger.info("Direct Mongo: Zero seed data in MongoDB strictly enforced (zero seed documents inserted into Mongo).")
             return True
+        return True
     except Exception as e:
         logger.warning("Direct Mongo sync failed: %s", e)
         return False

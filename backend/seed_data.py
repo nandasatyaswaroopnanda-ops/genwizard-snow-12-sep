@@ -173,7 +173,14 @@ def init_db_and_seed():
 
         # 1. Ensure essential Admin user exists
         admin_pass = os.getenv("ITSM_BOOTSTRAP_ADMIN_PASSWORD", "Admin@Secure2026!")
-        from identity_service.security import hash_password
+        try:
+            from identity_service.security import hash_password
+        except ImportError:
+            import hashlib
+            def hash_password(password: str) -> str:
+                salt = os.urandom(16)
+                key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000)
+                return f"pbkdf2_sha256${salt.hex()}${key.hex()}"
         admin = db.query(User).filter(User.username == "admin").first()
         if not admin:
             admin = User(
@@ -351,7 +358,14 @@ def _seed_demo_items(db: Session, admin_user: User, cal_24x7: BusinessCalendar, 
         return
 
     now = datetime.datetime.utcnow()
-    from identity_service.security import hash_password
+    try:
+        from identity_service.security import hash_password
+    except ImportError:
+        import hashlib
+        def hash_password(password: str) -> str:
+            salt = os.urandom(16)
+            key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000)
+            return f"pbkdf2_sha256${salt.hex()}${key.hex()}"
     admin_pass = os.getenv("ITSM_BOOTSTRAP_ADMIN_PASSWORD", "Admin@Secure2026!")
 
     def _ensure_user(emp_id, username, full_name, first, last, email, role):

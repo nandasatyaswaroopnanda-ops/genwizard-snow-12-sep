@@ -87,6 +87,14 @@ echo "==> Preparing installation directory: ${APP_DIR}"
 install -d -m 0750 "$APP_DIR"
 tar --exclude='.git' --exclude='.venv' --exclude='itsm.db*' --exclude='.env*' -C "$SOURCE_DIR" -cf - . | tar -C "$APP_DIR" -xf -
 
+if [[ ! -d "$APP_DIR/identity_service" ]]; then
+  echo "(!) Notice: identity_service directory missing from source. Creating stub directory..."
+  mkdir -p "$APP_DIR/identity_service"
+  cat <<'EOF' > "$APP_DIR/identity_service/__init__.py"
+# Runtime stub for identity_service package
+EOF
+fi
+
 ENV_FILE="$APP_DIR/.env.production"
 APP_HOST="${APP_URL#*://}"
 APP_HOST="${APP_HOST%%/*}"

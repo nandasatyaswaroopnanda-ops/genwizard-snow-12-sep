@@ -27,6 +27,7 @@ trap 'rm -rf "${STAGE_DIR}"' EXIT
 # Copy ONLY runtime components
 cp -r backend "${STAGE_DIR}/"
 cp -r frontend "${STAGE_DIR}/"
+cp -r identity_service "${STAGE_DIR}/"
 cp -r scripts "${STAGE_DIR}/"
 cp Dockerfile "${STAGE_DIR}/"
 cp Dockerfile.backend "${STAGE_DIR}/" 2>/dev/null || true
