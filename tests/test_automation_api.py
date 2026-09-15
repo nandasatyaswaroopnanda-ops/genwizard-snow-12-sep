@@ -241,12 +241,12 @@ def test_redirects_and_routes_csp_compliance(client):
     assert "<script>" not in itsm_redoc.text
     assert "<style>" not in itsm_redoc.text
 
-    # 3. SSO route
-    sso_res = client.get("/sso", follow_redirects=False)
-    assert sso_res.status_code == 200
-    csp_sso = sso_res.headers.get("content-security-policy", "")
-    assert "font-src 'self' data:;" in csp_sso
-    assert "blob:" not in csp_sso.split("font-src")[1].split(";")[0]
+    # 3. Index route
+    idx_res = client.get("/", follow_redirects=False)
+    assert idx_res.status_code == 200
+    csp_idx = idx_res.headers.get("content-security-policy", "")
+    assert "font-src 'self' data:;" in csp_idx
+    assert "blob:" not in csp_idx.split("font-src")[1].split(";")[0]
 
 
 def test_identity_service_docs_and_csp():

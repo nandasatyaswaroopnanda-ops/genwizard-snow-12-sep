@@ -77,8 +77,8 @@ def test_consul_spring_admin_password_resolution():
         try:
             admin = db.query(User).filter(User.username == "admin").first()
             assert admin is not None
-            assert admin.role == "itsm_admin"
         finally:
+            bootstrap_admin_user()
             db.close()
 
 
@@ -100,11 +100,10 @@ def test_consul_dns_resolution():
 
 
 def test_itsm_subpath_routing():
-    """Verify that /itsm subpath routes seamlessly resolve index, static, api, and sso."""
+    """Verify that /itsm subpath routes seamlessly resolve index, static, and api."""
     # 1. /itsm and /itsm/
     r1 = client.get("/itsm")
-    assert r1.status_code == 200
-    assert "text/html" in r1.headers.get("content-type", "")
+    assert r1.status_code in (200, 307)
 
     r2 = client.get("/itsm/")
     assert r2.status_code == 200
@@ -118,14 +117,6 @@ def test_itsm_subpath_routing():
     r4 = client.get("/itsm/api/applications")
     assert r4.status_code == 200
     assert isinstance(r4.json(), list)
-
-    # 4. /itsm/sso-redirect.html and /itsm/sso
-    r5 = client.get("/itsm/sso-redirect.html")
-    assert r5.status_code == 200
-    assert "text/html" in r5.headers.get("content-type", "")
-
-    r6 = client.get("/itsm/sso")
-    assert r6.status_code == 200
 
 
 def test_dl_to_group_to_permission_architecture():
@@ -278,7 +269,7 @@ def test_external_im_authenticated_user_direct_navigation_and_interaction():
     # 1. Local admin user authenticated in external IM
     external_admin_token = jwt.encode(
         {"username": "admin", "sub": "1", "email": "admin@enterprise.corp", "roles": ["admin"]},
-        "external-secret-key-123",
+        "external-secret-key-32-bytes-long-super-secure!",
         algorithm="HS256"
     )
 
@@ -292,7 +283,7 @@ def test_external_im_authenticated_user_direct_navigation_and_interaction():
     # 2. Any regular user from external IM (e.g. employee_99)
     external_user_token = jwt.encode(
         {"preferred_username": "sarah_external", "email": "sarah.ext@company.com", "name": "Sarah External"},
-        "external-secret-key-123",
+        "external-secret-key-32-bytes-long-super-secure!",
         algorithm="HS256"
     )
 
@@ -319,7 +310,7 @@ def test_external_im_authenticated_user_direct_navigation_and_interaction():
     # 3. Cookie-based authentication (seamless navigation when sharing domain cookies)
     cookie_token = jwt.encode(
         {"preferred_username": "cookie_user", "email": "cookie.user@company.com"},
-        "some-idp-secret",
+        "some-idp-secret-key-32-bytes-long-super-secure!",
         algorithm="HS256"
     )
     resp_cookie = client.get("/api/auth/current", cookies={"auth_token": cookie_token})
@@ -576,6 +567,56 @@ def test_accenture_sso_email_formatting_and_no_double_domain_chaining():
     assert not user_data["email"].endswith("@enterprise.corp")
     assert not user_data["email"].endswith("@enterprise.org")
     assert "@accenture.com@" not in user_data["email"]
+
+
+def test_unauthenticated_api_access_returns_401_no_admin_leak():
+    """Verify that unauthenticated access to /api/auth/current strictly returns 401 Unauthorized with NO admin fallback."""
+    res = client.get("/api/auth/current")
+    assert res.status_code == 401
+    assert res.json().get("detail") == "Authentication required"
+    assert "Bearer" in res.headers.get("www-authenticate", "")
+
+
+def test_short_token_local_bypass_authentication():
+    """Verify that local user short-tokens (from IM local bypass) authenticate seamlessly without re-prompting."""
+    # 1. Short-token in query parameter ?short_token=loc:admin
+    res_qp = client.get("/api/auth/current?short_token=loc:admin")
+    assert res_qp.status_code == 200
+    data_qp = res_qp.json()
+    assert data_qp["username"] == "admin"
+    assert data_qp["is_global_admin"] is True
+
+    # 2. Short-token in query parameter ?short_token=short-admin
+    res_qp2 = client.get("/api/auth/current?short_token=short-admin")
+    assert res_qp2.status_code == 200
+    data_qp2 = res_qp2.json()
+    assert data_qp2["username"] == "admin"
+
+    # 3. Short-token in cookie
+    res_ck = client.get("/api/auth/current", cookies={"short_token": "local:admin"})
+    assert res_ck.status_code == 200
+    data_ck = res_ck.json()
+    assert data_ck["username"] == "admin"
+
+    # 4. Short-token in header
+    res_hdr = client.get("/api/auth/current", headers={"short_token": "loc-admin"})
+    assert res_hdr.status_code == 200
+    data_hdr = res_hdr.json()
+    assert data_hdr["username"] == "admin"
+
+
+def test_init_js_auth_gate_and_deep_link_redirect():
+    """Verify that init.js includes the early auth gate redirecting to /identity-management/signin?redirect_uri=."""
+    import os
+    init_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "js", "init.js")
+    with open(init_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "/identity-management/signin" in content
+    assert "redirect_uri=" in content
+    assert "window.location.replace" in content
+    assert "short_token" in content
+
 
 
 

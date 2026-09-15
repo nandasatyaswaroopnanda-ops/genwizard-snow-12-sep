@@ -14,7 +14,6 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    keycloak_subject = Column(String(255), unique=True, index=True, nullable=True)
     employee_id = Column(String(50), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
     full_name = Column(String(150), nullable=False)
@@ -128,7 +127,6 @@ class User(Base):
 
         return {
             "id": self.id,
-            "keycloak_subject": self.keycloak_subject,
             "employee_id": self.employee_id,
             "username": self.username,
             "full_name": "admin" if (self.username == "admin" and self.full_name in ("Admin User", "admin")) else self.full_name,
@@ -1459,67 +1457,5 @@ class ADGroupMapping(Base):
             "custom_group_name": self.custom_group.name if self.custom_group else None,
             "description": self.description,
             "active": self.active,
-            "created_at": self.created_at.isoformat() if self.created_at else None
-        }
-
-
-class SSOProviderConfig(Base):
-    """B2B and B2C Single Sign-On and SAML 2.0 / OIDC provider configuration."""
-    __tablename__ = "sso_provider_configs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False) # e.g. Corporate SAML, Azure AD B2C
-    provider_type = Column(String(20), default="saml", nullable=False) # saml, oidc
-    b2b_or_b2c = Column(String(10), default="b2b", nullable=False) # b2b, b2c
-    entity_id = Column(String(255), nullable=True)
-    sso_url = Column(String(500), nullable=True)
-    client_id = Column(String(255), nullable=True)
-    client_secret = Column(String(255), nullable=True)
-    discovery_url = Column(String(500), nullable=True)
-    metadata_xml = Column(Text, nullable=True)
-    certificate = Column(Text, nullable=True)
-    eso_app_id = Column(String(255), nullable=True)
-    claims_email_path = Column(String(100), default="email", nullable=True)
-    claims_group_path = Column(String(100), default="groups", nullable=True)
-    claims_name_path = Column(String(100), default="name", nullable=True)
-    default_role = Column(String(50), default="itsm_user", nullable=False)
-    auto_provision = Column(Boolean, default=True, nullable=False)
-    role_mapping_rules = Column(Text, default="{}", nullable=True)
-    custom_group_mapping_rules = Column(Text, default="{}", nullable=True)
-    assignment_group_mapping_rules = Column(Text, default="{}", nullable=True)
-    enabled = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=utc_now)
-
-    def to_dict(self):
-        rmr = {}
-        cgmr = {}
-        agmr = {}
-        try:
-            rmr = json.loads(self.role_mapping_rules or "{}") if isinstance(self.role_mapping_rules, str) else (self.role_mapping_rules or {})
-            cgmr = json.loads(self.custom_group_mapping_rules or "{}") if isinstance(self.custom_group_mapping_rules, str) else (self.custom_group_mapping_rules or {})
-            agmr = json.loads(self.assignment_group_mapping_rules or "{}") if isinstance(self.assignment_group_mapping_rules, str) else (self.assignment_group_mapping_rules or {})
-        except Exception:
-            pass
-
-        return {
-            "id": self.id,
-            "name": self.name,
-            "provider_type": self.provider_type,
-            "b2b_or_b2c": self.b2b_or_b2c,
-            "entity_id": self.entity_id,
-            "sso_url": self.sso_url,
-            "client_id": self.client_id,
-            "discovery_url": self.discovery_url,
-            "eso_app_id": self.eso_app_id,
-            "claims_email_path": self.claims_email_path,
-            "claims_group_path": self.claims_group_path,
-            "claims_name_path": self.claims_name_path,
-            "default_role": self.default_role,
-            "auto_provision": self.auto_provision,
-            "role_mapping_rules": rmr,
-            "custom_group_mapping_rules": cgmr,
-            "assignment_group_mapping_rules": agmr,
-            "has_metadata_xml": bool(self.metadata_xml),
-            "enabled": self.enabled,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }

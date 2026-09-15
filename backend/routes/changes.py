@@ -1,6 +1,6 @@
 import datetime
 import json
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_, and_
 from typing import Optional, List
@@ -14,15 +14,9 @@ from backend.models import (
 from backend.routing_engine import RoutingEngine
 from backend.workflow_engine import WorkflowEngine
 from backend.notification_engine import NotificationEngine
+from backend.security import get_session_user
 
 router = APIRouter(prefix="/api/changes", tags=["changes"])
-
-def get_session_user(db: Session, x_user_id: Optional[str]) -> User:
-    user_id = 1
-    if x_user_id and x_user_id.isdigit():
-        user_id = int(x_user_id)
-    user = db.query(User).filter(User.id == user_id).first()
-    return user or db.query(User).first()
 
 class ChangeCreateSchema(BaseModel):
     application_id: int
@@ -69,6 +63,7 @@ class PriorityUpdateSchema(BaseModel):
 
 @router.get("")
 def list_changes(
+    request: Request,
     status: Optional[str] = None,
     change_type: Optional[str] = None,
     priority: Optional[str] = None,
@@ -80,7 +75,7 @@ def list_changes(
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    current_user = get_session_user(db, x_user_id)
+    current_user = get_session_user(db, x_user_id, request=request)
     user_group_ids = [m.group_id for m in current_user.memberships]
     query = db.query(ChangeRequest)
 
@@ -134,10 +129,11 @@ def list_changes(
 @router.post("")
 def create_change(
     payload: ChangeCreateSchema,
+    request: Request,
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    current_user = get_session_user(db, x_user_id)
+    current_user = get_session_user(db, x_user_id, request=request)
 
     last_chg = db.query(ChangeRequest).order_by(desc(ChangeRequest.id)).first()
     next_seq = (last_chg.id + 1001) if last_chg else 1001

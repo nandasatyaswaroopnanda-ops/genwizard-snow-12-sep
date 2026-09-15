@@ -15,13 +15,6 @@ def main():
     ])
     procs.append(p_backend)
 
-    # 2. Start Identity Service on port 8080
-    p_identity = subprocess.Popen([
-        sys.executable, "-m", "uvicorn", "identity_service.main:app",
-        "--host", "0.0.0.0", "--port", "8080"
-    ])
-    procs.append(p_identity)
-
     def shutdown(sig, frame):
         for p in procs:
             try:

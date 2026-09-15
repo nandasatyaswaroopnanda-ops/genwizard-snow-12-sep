@@ -1,12 +1,31 @@
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.models import User, CustomGroup, ADGroupMapping
+from identity_service.main import SSOProviderConfig
+
+from identity_service.main import app as identity_app, bootstrap_default_groups, bootstrap_admin_user
+from identity_service.security import hash_password
 from backend.database import SessionLocal
-from backend.models import User, CustomGroup, ADGroupMapping, SSOProviderConfig
+from fastapi import FastAPI
 
 @pytest.fixture
 def client():
-    with TestClient(app) as c:
+    bootstrap_default_groups()
+    bootstrap_admin_user()
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").first()
+        if admin:
+            admin.password_hash = hash_password("Admin@Secure2026!")
+            admin.role = "itsm_admin"
+            db.commit()
+    finally:
+        db.close()
+    test_app = FastAPI()
+    test_app.mount("/api/id", identity_app)
+    test_app.mount("", app)
+    with TestClient(test_app) as c:
         yield c
 
 def test_admin_bootstrap_and_login(client):
@@ -380,12 +399,12 @@ def test_sso_login_jit_provisioning_and_assignment_groups(client):
 
 
 def test_sso_redirect_static_route(client):
-    """Test that the animated SSO redirect portal is served correctly."""
-    resp = client.get("/sso-redirect.html")
+    """Test that auth config exposes the external IM sign-in URL."""
+    resp = client.get("/api/auth/config")
     assert resp.status_code == 200
-    assert "text/html" in resp.headers.get("content-type", "")
-    assert "Opening Genwizard ITSM..." in resp.text
-    assert "Enterprise IdP" in resp.text
+    data = resp.json()
+    assert "im_signin_url" in data
+    assert data["auth_type"] == "external_im"
 
 
 def test_sso_end_user_not_in_im_gets_im_saml_default_role_and_redirect(client):

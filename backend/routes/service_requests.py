@@ -1,6 +1,6 @@
 import datetime
 import json
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_, and_
 from typing import Optional, List
@@ -13,15 +13,9 @@ from backend.models import (
 )
 from backend.routing_engine import RoutingEngine
 from backend.notification_engine import NotificationEngine
+from backend.security import get_session_user
 
 router = APIRouter(prefix="/api/service-requests", tags=["service-requests"])
-
-def get_session_user(db: Session, x_user_id: Optional[str]) -> User:
-    user_id = 1
-    if x_user_id and x_user_id.isdigit():
-        user_id = int(x_user_id)
-    user = db.query(User).filter(User.id == user_id).first()
-    return user or db.query(User).first()
 
 class ServiceRequestCreateSchema(BaseModel):
     catalog_item: str
@@ -58,6 +52,7 @@ class ApprovalActionSchema(BaseModel):
 
 @router.get("")
 def list_service_requests(
+    request: Request,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     application_id: Optional[int] = None,
@@ -68,7 +63,7 @@ def list_service_requests(
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    current_user = get_session_user(db, x_user_id)
+    current_user = get_session_user(db, x_user_id, request=request)
     user_group_ids = [m.group_id for m in current_user.memberships]
 
     query = db.query(ServiceRequest)
@@ -122,10 +117,11 @@ def list_service_requests(
 @router.post("")
 def create_service_request(
     payload: ServiceRequestCreateSchema,
+    request: Request,
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    current_user = get_session_user(db, x_user_id)
+    current_user = get_session_user(db, x_user_id, request=request)
 
     last_req = db.query(ServiceRequest).order_by(desc(ServiceRequest.id)).first()
     next_seq = (last_req.id + 1001) if last_req else 1001

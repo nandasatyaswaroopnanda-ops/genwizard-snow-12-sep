@@ -18,24 +18,7 @@ from backend.notification_engine import NotificationEngine
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
-def get_session_user(db: Session, x_user_id: Optional[str] = None, request: Optional[Request] = None) -> User:
-    if x_user_id and str(x_user_id).isdigit():
-        user = db.query(User).filter(User.id == int(x_user_id)).first()
-        if user:
-            return user
-    if request:
-        try:
-            from backend.security import get_current_user
-            auth_header = request.headers.get("authorization")
-            cred = None
-            if auth_header and auth_header.lower().startswith("bearer "):
-                from fastapi.security import HTTPAuthorizationCredentials
-                cred = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header[7:].strip())
-            return get_current_user(request=request, credentials=cred, db=db)
-        except Exception:
-            pass
-    user = db.query(User).filter(User.id == 1).first()
-    return user or db.query(User).first()
+from backend.security import get_session_user
 
 class IncidentCreateSchema(BaseModel):
     caller_id: Optional[int] = None
@@ -79,6 +62,7 @@ class AssignSchema(BaseModel):
 
 @router.get("")
 def list_incidents(
+    request: Request,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     application_id: Optional[int] = None,
@@ -88,7 +72,6 @@ def list_incidents(
     sla_stage: Optional[str] = None,
     search: Optional[str] = None,
     my_tickets: bool = False,
-    request: Request = None,
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
@@ -169,7 +152,7 @@ def list_incidents(
 @router.post("")
 def create_incident(
     payload: IncidentCreateSchema,
-    request: Request = None,
+    request: Request,
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):

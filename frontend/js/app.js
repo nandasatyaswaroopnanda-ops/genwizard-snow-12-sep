@@ -74,9 +74,6 @@ if (typeof window !== 'undefined') window.Chart = Chart;
 var marked = (typeof window !== 'undefined' && window.marked) ? window.marked : (typeof marked !== 'undefined' ? marked : { parse: function(s) { return s; } });
 if (typeof window !== 'undefined') window.marked = marked;
 
-var Keycloak = (typeof window !== 'undefined' && window.Keycloak) ? window.Keycloak : (typeof Keycloak !== 'undefined' ? Keycloak : null);
-if (typeof window !== 'undefined') window.Keycloak = Keycloak;
-
 const isSubpath = window.location.pathname.startsWith('/itsm');
 const API_BASE = window.location.protocol === 'file:'
   ? 'http://127.0.0.1:8000/api'
@@ -86,31 +83,34 @@ const ITSM_BASE_PATH = isSubpath ? '/itsm' : '';
 // Detect any active authentication token passed via URL, cookies, or existing IM storage
 function detectExternalAuthToken() {
   try {
-    // 1. URL search or hash parameters (e.g. /itsm?apiToken=... or /itsm?token=... or /itsm#access_token=...)
+    // 1. URL search or hash parameters (e.g. /itsm?apiToken=... or /itsm?token=... or /itsm?short_token=... or /itsm#access_token=...)
     const urlParams = new URLSearchParams(window.location.search);
     const hash = window.location.hash || '';
     const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
     const urlToken = urlParams.get('apiToken') || urlParams.get('apitoken') || urlParams.get('api_token') || urlParams.get('api-token')
+      || urlParams.get('short_token') || urlParams.get('shortToken') || urlParams.get('short-token') || urlParams.get('SHORT_TOKEN')
       || urlParams.get('atr-token') || urlParams.get('atr_token') || urlParams.get('im-token') || urlParams.get('im_token')
       || urlParams.get('token') || urlParams.get('access_token') || urlParams.get('auth_token') || urlParams.get('jwt') || urlParams.get('id_token')
-      || hashParams.get('token') || hashParams.get('access_token') || hashParams.get('apiToken') || hashParams.get('id_token');
-    if (urlToken && urlToken.length > 8) {
+      || hashParams.get('token') || hashParams.get('access_token') || hashParams.get('apiToken') || hashParams.get('short_token') || hashParams.get('id_token');
+    if (urlToken && urlToken.length >= 4) {
       localStorage.setItem('auth_token', urlToken);
       localStorage.setItem('apiToken', urlToken);
+      localStorage.setItem('short_token', urlToken);
       return urlToken;
     }
 
     // 2. LocalStorage keys used by external Identity Management frontends
     const storageKeys = [
       'apiToken', 'apitoken', 'api_token', 'api-token',
+      'short_token', 'shortToken', 'short-token', 'SHORT_TOKEN',
       'atr-token', 'atr_token', 'im-token', 'im_token',
       'auth_token', 'authToken', 'access_token', 'accessToken',
       'token', 'jwt', 'id_token', 'user_token',
-      'keycloak-token', 'kc-token', 'KEYCLOAK_TOKEN', 'sso_token'
+      'sso_token'
     ];
     for (const k of storageKeys) {
       const val = localStorage.getItem(k);
-      if (val && typeof val === 'string' && val.length > 8) {
+      if (val && typeof val === 'string' && val.length >= 4) {
         return val;
       }
     }
@@ -118,7 +118,7 @@ function detectExternalAuthToken() {
     // 3. SessionStorage keys
     for (const k of storageKeys) {
       const val = sessionStorage.getItem(k);
-      if (val && typeof val === 'string' && val.length > 8) {
+      if (val && typeof val === 'string' && val.length >= 4) {
         return val;
       }
     }
@@ -129,8 +129,8 @@ function detectExternalAuthToken() {
       if (raw) {
         try {
           const u = JSON.parse(raw);
-          const t = u.token || u.apiToken || u.access_token || u.accessToken || u.jwt || u.id_token;
-          if (t && typeof t === 'string' && t.length > 8) {
+          const t = u.token || u.apiToken || u.short_token || u.access_token || u.accessToken || u.jwt || u.id_token;
+          if (t && typeof t === 'string' && t.length >= 4) {
             return t;
           }
         } catch (e) {}
@@ -139,11 +139,11 @@ function detectExternalAuthToken() {
 
     // 5. Browser cookies
     if (typeof document !== 'undefined' && document.cookie) {
-      const m = document.cookie.match(/(?:^|;\s*)(?:apiToken|apitoken|api_token|api-token|atr-token|atr_token|im-token|im_token|auth_token|authToken|access_token|accessToken|token|jwt|Authorization|SESSION|sessionId|JSESSIONID|keycloak-token|kc-token|KEYCLOAK_IDENTITY|KEYCLOAK_SESSION)=([^;]+)/i);
+      const m = document.cookie.match(/(?:^|;\s*)(?:apiToken|apitoken|api_token|api-token|atr-token|atr_token|im-token|im_token|short_token|shortToken|short-token|SHORT_TOKEN|auth_token|authToken|access_token|accessToken|token|jwt|Authorization|SESSION|sessionId|JSESSIONID)=([^;]+)/i);
       if (m && m[1]) {
         let cookieVal = decodeURIComponent(m[1].trim());
         if (cookieVal.toLowerCase().startsWith('bearer ')) cookieVal = cookieVal.substring(7).trim();
-        if (cookieVal.length > 8) return cookieVal;
+        if (cookieVal.length >= 4) return cookieVal;
       }
     }
   } catch (err) {
@@ -344,8 +344,6 @@ function matchesTimeRange(createdAt, tVal, customStart, customEnd, timeZone) {
   return true;
 }
 
-let keycloak = null;
-
 function getFilteredAssignmentGroups(projectNames, appNames, fallbackGroupNames = []) {
   let pCleanList = [];
   if (Array.isArray(projectNames) || projectNames instanceof Set) {
@@ -415,6 +413,31 @@ function getFilteredAssignmentGroups(projectNames, appNames, fallbackGroupNames 
 
   return [...matched].sort();
 }
+if (typeof window !== 'undefined') window.getFilteredAssignmentGroups = getFilteredAssignmentGroups;
+
+function showToast(message, type = 'info') {
+  if (typeof window === 'undefined' || !document.body) return;
+  let container = document.getElementById('nexus-toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'nexus-toast-container';
+    container.className = 'fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  const bgClass = type === 'warning' ? 'bg-amber-600' : (type === 'error' ? 'bg-rose-600' : 'bg-purple-600');
+  toast.className = `${bgClass} text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg transition-all duration-300 pointer-events-auto opacity-0 translate-y-2`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.remove('opacity-0', 'translate-y-2');
+  });
+  setTimeout(() => {
+    toast.classList.add('opacity-0', 'translate-y-2');
+    setTimeout(() => toast.remove(), 300);
+  }, 3500);
+}
+if (typeof window !== 'undefined') window.showToast = showToast;
 
 function createMultiSelectDropdown({
   container,
@@ -633,20 +656,11 @@ async function initSso() {
     const response = await fetch(`${API_BASE}/auth/config`);
     if (!response.ok) return;
     const config = await response.json();
-    if (!config || !config.enabled) return;
-    if (!window.Keycloak) return;
-    keycloak = new Keycloak({ url: config.url, realm: config.realm, clientId: config.clientId });
-    const authenticated = await keycloak.init({ onLoad: 'login-required', pkceMethod: 'S256', checkLoginIframe: false });
-    if (!authenticated) return;
-    window.setInterval(() => keycloak.updateToken(60).catch(() => keycloak.login()), 30000);
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = (input, options = {}) => {
-      const headers = new Headers(options.headers || {});
-      headers.set('Authorization', `Bearer ${keycloak.token}`);
-      return originalFetch(input, { ...options, headers });
-    };
+    if (config && config.im_signin_url) {
+      window.imSigninUrl = config.im_signin_url;
+    }
   } catch (err) {
-    console.warn('SSO initialization deferred:', err);
+    console.warn('Auth config fetch deferred:', err);
   }
 }
 
@@ -933,6 +947,18 @@ async function loadCurrentUser() {
       }
       updateBackendStatus(true, 'Backend Online');
     } else {
+      if (res.status === 401) {
+        localStorage.removeItem('current_user');
+        localStorage.removeItem('nexus_user_id');
+        const imBase = (typeof window !== 'undefined' && (window.__IM_SIGNIN_URL || window.__EXISTING_APP_IM_URL))
+          || (typeof document !== 'undefined' && document.querySelector('meta[name="im-signin-url"]')?.getAttribute('content'))
+          || localStorage.getItem('im_signin_url')
+          || '/identity-management/signin';
+        const currentUrl = window.location.href;
+        const sep = imBase.indexOf('?') !== -1 ? '&' : '?';
+        window.location.replace(imBase + sep + 'redirect_uri=' + encodeURIComponent(currentUrl));
+        return;
+      }
       if (ssoUser) {
         state.currentUser = ssoUser;
         updateUserUI();
@@ -1096,14 +1122,17 @@ function updateNavVisibilityForRole() {
     }
   }
 
-  // Hide the persona switcher entirely when Keycloak SSO is active —
-  // in production, identity is fixed by the SSO token, not by localStorage
+  // Hide the persona switcher dropdown when external IM SSO is active —
+  // in production, identity is fixed by the external IM token
   const switcherBtn = document.getElementById('userSwitcherBtn');
   const switcherDropdown = document.getElementById('userDropdown');
-  if (keycloak) {
+  const isExternalSso = state.currentUser && (!state.currentUser.is_local || state.currentUser.username !== 'admin');
+  if (isExternalSso) {
     if (switcherBtn) switcherBtn.style.pointerEvents = 'none';
     if (switcherDropdown) switcherDropdown.style.display = 'none';
-    if (switcherBtn) switcherBtn.querySelector('i[data-lucide="chevron-down"]') && (switcherBtn.querySelector('i[data-lucide="chevron-down"]').style.display = 'none');
+    if (switcherBtn && switcherBtn.querySelector('i[data-lucide="chevron-down"]')) {
+      switcherBtn.querySelector('i[data-lucide="chevron-down"]').style.display = 'none';
+    }
   } else {
     if (switcherBtn) switcherBtn.style.pointerEvents = '';
   }
@@ -1342,9 +1371,14 @@ function userSignOut() {
   localStorage.removeItem('access_token');
   localStorage.removeItem('apiToken');
   localStorage.removeItem('api_token');
+  localStorage.removeItem('short_token');
+  localStorage.removeItem('shortToken');
+  localStorage.removeItem('short-token');
   localStorage.removeItem('current_user');
   localStorage.removeItem('sso_user');
   localStorage.removeItem('sso_username');
+  localStorage.removeItem('sso_fullname');
+  localStorage.removeItem('sso_email');
   localStorage.removeItem('active_user_id');
   localStorage.removeItem('nexus_user_id');
   try { sessionStorage.clear(); } catch (_) {}
@@ -1352,8 +1386,8 @@ function userSignOut() {
   // Expire cookies
   if (typeof document !== 'undefined') {
     const cKeys = [
-      'auth_token', 'access_token', 'apiToken', 'api_token', 'im-token', 'im_token',
-      'atr-token', 'atr_token', 'token', 'jwt', 'sessionId', 'JSESSIONID', 'SESSION',
+      'auth_token', 'access_token', 'apiToken', 'api_token', 'short_token', 'shortToken', 'short-token', 'SHORT_TOKEN',
+      'im-token', 'im_token', 'atr-token', 'atr_token', 'token', 'jwt', 'sessionId', 'JSESSIONID', 'SESSION',
       'im_user', 'sso_username', 'sso_user', 'username', 'user', 'currentUser'
     ];
     for (const ck of cKeys) {
@@ -1364,7 +1398,13 @@ function userSignOut() {
 
   toggleUserDropdown();
   const isSubpath = window.location.pathname.startsWith('/itsm');
-  window.location.href = isSubpath ? '/itsm/' : '/';
+  const targetUrl = window.location.origin + (isSubpath ? '/itsm/' : '/');
+  const imBase = (typeof window !== 'undefined' && (window.__IM_SIGNIN_URL || window.__EXISTING_APP_IM_URL))
+    || (typeof document !== 'undefined' && document.querySelector('meta[name="im-signin-url"]')?.getAttribute('content'))
+    || localStorage.getItem('im_signin_url')
+    || '/identity-management/signin';
+  const sep = imBase.indexOf('?') !== -1 ? '&' : '?';
+  window.location.replace(imBase + sep + 'redirect_uri=' + encodeURIComponent(targetUrl));
 }
 window.userSignOut = userSignOut;
 
@@ -6580,10 +6620,12 @@ function renderAdminSubView(container, sub) {
       renderAiAdminView(container);
       break;
     case 'audits':
-      renderAuditsAdminView(container);
+      if (typeof renderAuditsAdminView === 'function') renderAuditsAdminView(container);
+      else renderVisualConfigGraph(container);
       break;
     case 'import-export':
-      renderImportExportView(container);
+      if (typeof renderImportExportView === 'function') renderImportExportView(container);
+      else renderVisualConfigGraph(container);
       break;
     case 'identity':
       renderIdentityManagementView(container);
@@ -10749,976 +10791,26 @@ function renderImportedCharts(priorities, closureCats, apps, statuses) {
 // --- IDENTITY MANAGEMENT & ACCESS CONTROL VIEW ---
 // ============================================================================
 
-let currentIdentityTab = 'users';
-
-async function renderIdentityManagementView(container) {
-  container.innerHTML = `<div class="p-8 text-center text-slate-400"><i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto mb-2 text-purple-500"></i>Loading Identity & Access Management...</div>`;
-  lucide.createIcons();
-
-  let users = [];
-  let customGroups = [];
-  let adMappings = [];
-  let ssoConfigs = [];
-  let permissionsList = [];
-
-  try {
-    const [uRes, gRes, mRes, sRes, pRes] = await Promise.allSettled([
-      fetch(`${API_BASE}/id/users`),
-      fetch(`${API_BASE}/id/groups`),
-      fetch(`${API_BASE}/id/ad-mappings`),
-      fetch(`${API_BASE}/id/sso/config`),
-      fetch(`${API_BASE}/id/permissions`)
-    ]);
-
-    if (uRes.status === 'fulfilled' && uRes.value.ok) users = await uRes.value.json();
-    if (gRes.status === 'fulfilled' && gRes.value.ok) customGroups = await gRes.value.json();
-    if (mRes.status === 'fulfilled' && mRes.value.ok) adMappings = await mRes.value.json();
-    if (sRes.status === 'fulfilled' && sRes.value.ok) ssoConfigs = await sRes.value.json();
-    if (pRes.status === 'fulfilled' && pRes.value.ok) permissionsList = await pRes.value.json();
-  } catch (e) {
-    console.warn("Identity service fetch warning:", e);
-  }
-
+function renderIdentityManagementView(container) {
+  const imUrl = window.imSigninUrl || '/identity-management';
   container.innerHTML = `
-    <div class="space-y-6">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <div class="flex items-center space-x-2">
-            <h1 class="text-2xl font-black tracking-tight">Enterprise Identity & Access Management</h1>
-            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">Identity Service Pod</span>
-          </div>
-          <p class="text-sm text-slate-500">Manage local users, fixed administrator credentials, custom RBAC groups, Active Directory group mapping, and B2B/B2C SSO with SAML 2.0 metadata.</p>
-        </div>
-        <div class="flex items-center space-x-2">
-          <a href="${API_BASE}/id/docs" target="_blank" class="border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--bg-tertiary)] px-3 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 text-purple-600">
-            <i data-lucide="file-code" class="w-4 h-4"></i>
-            <span>Identity API Swagger</span>
-          </a>
-        </div>
+    <div class="p-8 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] text-center space-y-4 max-w-xl mx-auto my-12 shadow-sm">
+      <div class="w-12 h-12 rounded-2xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 flex items-center justify-center mx-auto">
+        <i data-lucide="shield-check" class="w-6 h-6"></i>
       </div>
-
-      <!-- Navigation Tabs -->
-      <div class="flex space-x-1 border-b border-[var(--border-color)]">
-        <button data-click="switchIdentityTab('users')" id="tabBtn-users" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'users' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
-          <i data-lucide="users" class="w-4 h-4"></i>
-          <span>Local Users & Admin</span>
-          <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${users.length}</span>
-        </button>
-        <button data-click="switchIdentityTab('groups')" id="tabBtn-groups" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'groups' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
-          <i data-lucide="shield" class="w-4 h-4"></i>
-          <span>Roles & Custom Groups</span>
-          <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${customGroups.length}</span>
-        </button>
-        <button data-click="switchIdentityTab('ad')" id="tabBtn-ad" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'ad' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
-          <i data-lucide="network" class="w-4 h-4"></i>
-          <span>Active Directory Mappings</span>
-          <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">${adMappings.length}</span>
-        </button>
-        <button data-click="switchIdentityTab('sso')" id="tabBtn-sso" class="px-4 py-2.5 text-xs font-bold border-b-2 ${currentIdentityTab === 'sso' ? 'border-purple-600 text-purple-600' : 'border-transparent text-slate-400 hover:text-[var(--text-primary)]'} flex items-center space-x-1.5">
-          <i data-lucide="key" class="w-4 h-4"></i>
-          <span>Enterprise SSO & SAML Metadata</span>
-        </button>
-      </div>
-
-      <!-- Tab Content Area -->
-      <div id="identityTabContent"></div>
-    </div>
-  `;
-  lucide.createIcons();
-
-  renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, permissionsList);
-}
-
-function switchIdentityTab(tab) {
-  currentIdentityTab = tab;
-  const container = document.getElementById('mainApp');
-  if (container) renderIdentityManagementView(container);
-}
-
-function renderIdentityTabContent(users, customGroups, adMappings, ssoConfigs, permissionsList) {
-  const content = document.getElementById('identityTabContent');
-  if (!content) return;
-
-  if (currentIdentityTab === 'users') {
-    content.innerHTML = `
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="text-xs text-slate-500">Local user accounts managed directly in the platform, including the bootstrapped fixed administrator (<b>admin</b>).</div>
-          <button data-click="openCreateLocalUserModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
-            <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
-            <span>+ Add Local User</span>
-          </button>
-        </div>
-
-        <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs">
-              <thead class="bg-[var(--bg-tertiary)] text-slate-400 uppercase font-semibold text-[10px]">
-                <tr>
-                  <th class="p-3.5">Username</th>
-                  <th class="p-3.5">Full Name</th>
-                  <th class="p-3.5">Email</th>
-                  <th class="p-3.5">Role</th>
-                  <th class="p-3.5">Custom Groups</th>
-                  <th class="p-3.5">Account Type</th>
-                  <th class="p-3.5">Status</th>
-                  <th class="p-3.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-[var(--border-color)]">
-                ${users.map(u => `
-                  <tr class="hover:bg-[var(--bg-tertiary)] transition-colors">
-                    <td class="p-3.5 font-bold text-purple-600 flex items-center space-x-1.5">
-                      <span>${u.username}</span>
-                      ${u.username === 'admin' ? '<span class="px-1.5 py-0.2 rounded text-[9px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">BOOTSTRAP ADMIN</span>' : ''}
-                    </td>
-                    <td class="p-3.5 font-medium text-[var(--text-primary)]">${u.full_name}</td>
-                    <td class="p-3.5 text-slate-500">${u.email}</td>
-                    <td class="p-3.5">
-                      <span class="px-2 py-0.5 rounded text-[10px] font-bold ${u.role === 'itsm_admin' || u.role === 'administrator' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' : u.role === 'itsm_user' || u.role === 'support_member' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}">
-                        ${u.role}
-                      </span>
-                    </td>
-                    <td class="p-3.5">
-                      ${(u.custom_groups && u.custom_groups.length) ? u.custom_groups.map(g => `<span class="px-1.5 py-0.2 rounded text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 mr-1">${g}</span>`).join('') : '<span class="text-slate-400">—</span>'}
-                    </td>
-                    <td class="p-3.5">
-                      <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${u.is_local ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-600'}">
-                        ${u.is_local ? 'Local Account' : 'SSO Account'}
-                      </span>
-                    </td>
-                    <td class="p-3.5">
-                      <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${u.active ? 'text-emerald-600' : 'text-slate-400'}">${u.active ? '● Active' : '○ Inactive'}</span>
-                    </td>
-                    <td class="p-3.5 text-right space-x-2">
-                      <button data-click="openEditLocalUserModal(${u.id}, '${u.username}', '${u.full_name}', '${u.email}', '${u.role}')" class="text-purple-600 hover:text-purple-700 font-bold text-xs">Edit</button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } else if (currentIdentityTab === 'groups') {
-    content.innerHTML = `
-      <div class="space-y-6">
-        <!-- Standard Roles Box -->
-        <div class="p-4 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] space-y-3">
-          <h3 class="font-bold text-sm flex items-center space-x-2">
-            <i data-lucide="shield-alert" class="w-4 h-4 text-purple-600"></i>
-            <span>Standard ITSM System Roles</span>
-          </h3>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <div class="p-3 rounded-xl bg-purple-500/5 border border-purple-500/20">
-              <div class="font-bold text-purple-600 text-sm mb-1">itsm_admin</div>
-              <p class="text-slate-500 text-[11px] mb-2">Has all platform permissions (*). Can configure applications, routing, SLAs, security, and credentials.</p>
-              <div class="text-[10px] font-semibold text-purple-500">Scope: Full Administrative Control</div>
-            </div>
-            <div class="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20">
-              <div class="font-bold text-blue-600 text-sm mb-1">itsm_user</div>
-              <p class="text-slate-500 text-[11px] mb-2">Standard support agent. Can create, fulfill, assign, resolve tickets, and record internal work notes.</p>
-              <div class="text-[10px] font-semibold text-blue-500">Scope: Ticket Fulfill & Incident Response</div>
-            </div>
-            <div class="p-3 rounded-xl bg-slate-500/5 border border-slate-500/20">
-              <div class="font-bold text-slate-600 dark:text-slate-300 text-sm mb-1">itsm_read</div>
-              <p class="text-slate-500 text-[11px] mb-2">Auditor or viewer role. Read-only access to view tickets, schedules, and knowledge base.</p>
-              <div class="text-[10px] font-semibold text-slate-400">Scope: Read-Only Audit & Search</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Custom Groups Table -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <h3 class="font-bold text-sm">Custom Security Groups & Tailored Permissions</h3>
-              <p class="text-xs text-slate-500">Create custom groups with granular permissions of your choice.</p>
-            </div>
-            <button data-click="openCreateCustomGroupModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
-              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-              <span>+ Add Custom Group</span>
-            </button>
-          </div>
-
-          <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
-            <table class="w-full text-left text-xs">
-              <thead class="bg-[var(--bg-tertiary)] text-slate-400 uppercase font-semibold text-[10px]">
-                <tr>
-                  <th class="p-3.5">Group Name</th>
-                  <th class="p-3.5">Description</th>
-                  <th class="p-3.5">Permissions Count</th>
-                  <th class="p-3.5">Permissions Granted</th>
-                  <th class="p-3.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-[var(--border-color)]">
-                ${customGroups.map(g => `
-                  <tr class="hover:bg-[var(--bg-tertiary)] transition-colors">
-                    <td class="p-3.5 font-bold text-purple-600">${g.name}</td>
-                    <td class="p-3.5 text-slate-500">${g.description || '—'}</td>
-                    <td class="p-3.5 font-bold">${g.permissions.length} perms</td>
-                    <td class="p-3.5">
-                      <div class="flex flex-wrap gap-1 max-w-md">
-                        ${g.permissions.map(p => `<span class="px-1.5 py-0.2 rounded text-[9px] bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono">${p}</span>`).join('')}
-                      </div>
-                    </td>
-                    <td class="p-3.5 text-right space-x-2">
-                      <button data-click="deleteCustomGroup(${g.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
-                    </td>
-                  </tr>
-                `).join('') || `<tr><td colspan="5" class="p-8 text-center text-slate-400">No custom groups created yet. Click "+ Add Custom Group" to create one.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `;
-  } else if (currentIdentityTab === 'ad') {
-    content.innerHTML = `
-      <div class="space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <h3 class="font-bold text-sm">Active Directory (AD) / LDAP Group Mappings</h3>
-            <p class="text-xs text-slate-500">Map enterprise AD group claims to ITSM standard roles and custom groups.</p>
-          </div>
-          <button data-click="openCreateADMappingModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
-            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-            <span>+ Add AD Mapping</span>
-          </button>
-        </div>
-
-        <div class="rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] overflow-hidden shadow-sm">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-[var(--bg-tertiary)] text-slate-400 uppercase font-semibold text-[10px]">
-              <tr>
-                <th class="p-3.5">AD Group Name / DN</th>
-                <th class="p-3.5">Mapped Role</th>
-                <th class="p-3.5">Mapped Custom Group</th>
-                <th class="p-3.5">Description</th>
-                <th class="p-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-[var(--border-color)]">
-              ${adMappings.map(m => `
-                <tr class="hover:bg-[var(--bg-tertiary)] transition-colors">
-                  <td class="p-3.5 font-bold font-mono text-purple-600">${m.ad_group_name}</td>
-                  <td class="p-3.5">
-                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${m.target_role === 'itsm_admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">
-                      ${m.target_role || 'None'}
-                    </span>
-                  </td>
-                  <td class="p-3.5 font-medium">${m.custom_group_name || '—'}</td>
-                  <td class="p-3.5 text-slate-500">${m.description || '—'}</td>
-                  <td class="p-3.5 text-right">
-                    <button data-click="deleteADMapping(${m.id})" class="text-red-500 hover:text-red-700 font-bold text-xs">Delete</button>
-                  </td>
-                </tr>
-              `).join('') || `<tr><td colspan="5" class="p-8 text-center text-slate-400">No AD group mappings defined yet.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Live AD Resolution Sandbox -->
-        <div class="p-4 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] space-y-3">
-          <h4 class="font-bold text-xs flex items-center space-x-1.5">
-            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-500"></i>
-            <span>Active Directory Claim Resolution Tester</span>
-          </h4>
-          <p class="text-[11px] text-slate-500">Type comma-separated AD groups to verify how permissions will be resolved when a user authenticates.</p>
-          <div class="flex gap-2">
-            <input id="testAdGroupsInput" type="text" placeholder="e.g. CN=ITSM-Admins,OU=Groups,DC=company, CN=Payment-Engineers,OU=Support" class="flex-1 bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-purple-500" />
-            <button data-click="testAdResolution()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Test Resolution</button>
-          </div>
-          <div id="adResolutionResult" class="hidden p-3 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-color)] text-xs"></div>
-        </div>
-      </div>
-    `;
-  } else if (currentIdentityTab === 'sso') {
-    content.innerHTML = `
-      <div class="space-y-6">
-        <!-- SAML SP Metadata Download & Direct Redirect Banner -->
-        <div class="p-5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-purple-950/40 border border-purple-500/40 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div class="flex items-center space-x-2">
-                <h3 class="font-bold text-sm text-purple-200 flex items-center space-x-2">
-                  <i data-lucide="shield-check" class="w-5 h-5 text-purple-400"></i>
-                  <span>Enterprise SSO & SAML 2.0 / OIDC Integration Hub</span>
-                </h3>
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">Edge Gateway Ready</span>
-              </div>
-              <p class="text-xs text-slate-300 mt-1">Seamless federation with Enterprise Sign-On (ESO), Microsoft Entra ID (Azure AD), Keycloak, and B2B/B2C IdPs.</p>
-            </div>
-            <div class="flex items-center space-x-2">
-              <a href="/sso-redirect.html" target="_blank" class="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-lg">
-                <i data-lucide="external-link" class="w-4 h-4"></i>
-                <span>Open SSO Redirect Flow</span>
-              </a>
-              <a href="${API_BASE}/id/sso/metadata.xml" download="genwizard-itsm-sp-metadata.xml" class="bg-purple-600 hover:bg-purple-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-lg">
-                <i data-lucide="download" class="w-4 h-4"></i>
-                <span>Download SP XML</span>
-              </a>
-            </div>
-          </div>
-          <div class="p-3 bg-black/40 rounded-xl border border-white/10 font-mono text-[11px] text-purple-200 grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div>EntityID: <span class="text-amber-300 break-all">${window.location.origin}${ITSM_BASE_PATH}/api/id/saml/metadata</span></div>
-            <div>ACS URL: <span class="text-emerald-300 break-all">${window.location.origin}${ITSM_BASE_PATH}/api/id/saml/acs</span> (HTTP-POST)</div>
-            <div>Edge Redirect: <span class="text-cyan-300 break-all">${window.location.origin}${ITSM_BASE_PATH}/sso</span></div>
-          </div>
-        </div>
-
-        <!-- Seamless ESO Registration (Existing App ID) Card -->
-        <div class="p-5 rounded-2xl bg-[var(--card-bg)] border border-purple-500/30 shadow-sm space-y-3">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div class="flex items-center space-x-2">
-                <h4 class="font-bold text-sm text-[var(--text-primary)]">Seamless ESO Registration (Existing App ID)</h4>
-                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 border border-purple-300 dark:border-purple-800">Fast Setup</span>
-              </div>
-              <p class="text-xs text-slate-400 mt-1">If you already have an App ID in corporate ESO, Keycloak, or Azure AD, register it to instantly pre-configure SP endpoints and claim mapping paths.</p>
-            </div>
-            <button data-click="openRegisterESOAppIdModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 whitespace-nowrap">
-              <i data-lucide="plus-circle" class="w-4 h-4"></i>
-              <span>Register Existing ESO App ID</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Live Claim & Group Mapping Sandbox -->
-        <div class="p-5 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <h4 class="font-bold text-sm text-[var(--text-primary)]">Live SSO Claim & Group Mapping Sandbox</h4>
-              <p class="text-xs text-slate-400">Test how incoming IdP claims (email, name, groups) resolve to Platform Roles, Custom Groups, and ITSM Assignment Queues.</p>
-            </div>
-            <button data-click="testClaimAndGroupMapping()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
-              <i data-lucide="play" class="w-3.5 h-3.5"></i>
-              <span>Simulate Mapping</span>
-            </button>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label class="block font-semibold text-xs mb-1 text-slate-400">Sample Token Claims (JSON)</label>
-              <textarea id="sampleClaimsInput" rows="7" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 font-mono text-xs text-slate-200 focus:ring-1 focus:ring-purple-500">{
-  "email": "alex.engineer@accenture.com",
-  "name": "Alex Engineer",
-  "groups": ["ITSM-Admins", "Service Desk", "Cloud Operations"],
-  "realm_access": {
-    "roles": ["support_lead", "ServiceDesk"]
-  }
-}</textarea>
-            </div>
-            <div>
-              <label class="block font-semibold text-xs mb-1 text-slate-400">Resolved Identity & ITSM Mapping Preview</label>
-              <div id="mappingSimulationOutput" class="h-[148px] overflow-y-auto bg-black/40 border border-[var(--border-color)] rounded-xl p-3 text-xs text-slate-300 space-y-1.5 font-mono">
-                <div class="text-slate-500 italic">Click "Simulate Mapping" to evaluate claims against application groups.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- SSO Providers Management List -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <h3 class="font-bold text-sm">Configured SSO Providers</h3>
-              <p class="text-xs text-slate-500">Active SAML 2.0 & OIDC federations with role mapping.</p>
-            </div>
-            <div class="flex space-x-2">
-              <button data-click="openImportIdPMetadataModal()" class="border border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow flex items-center space-x-1.5">
-                <i data-lucide="upload" class="w-3.5 h-3.5"></i>
-                <span>Import IdP Metadata XML</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            ${ssoConfigs.map(c => `
-              <div class="p-4 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)] shadow-sm space-y-2.5">
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center space-x-2">
-                    <span class="font-bold text-sm text-[var(--text-primary)]">${c.name}</span>
-                    ${c.eso_app_id ? `<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-950 text-purple-300 border border-purple-800">ESO App: ${c.eso_app_id}</span>` : ''}
-                  </div>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold ${c.b2b_or_b2c === 'b2b' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300'} uppercase">${c.b2b_or_b2c} · ${c.provider_type}</span>
-                </div>
-                <div class="text-xs text-slate-500 space-y-1">
-                  <div>Entity ID: <code class="text-purple-600 text-[11px]">${c.entity_id || '—'}</code></div>
-                  <div>SSO Endpoint: <code class="text-slate-400 break-all text-[11px]">${c.sso_url || '—'}</code></div>
-                  <div>Default Role: <span class="font-semibold text-purple-400 capitalize">${c.default_role || 'itsm_user'}</span></div>
-                </div>
-                <div class="pt-2 flex items-center justify-between border-t border-[var(--border-color)]">
-                  <span class="text-[10px] font-semibold text-emerald-600">● SSO Enabled</span>
-                  <a href="/sso-redirect.html?provider_id=${c.id}${c.eso_app_id ? '&eso_app_id=' + c.eso_app_id : ''}" target="_blank" class="text-[11px] font-bold text-purple-600 hover:text-purple-500 hover:underline flex items-center space-x-1">
-                    <span>Test SSO Redirect</span>
-                    <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                  </a>
-                </div>
-              </div>
-            `).join('') || `
-              <div class="col-span-2 p-8 text-center text-slate-400 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)]">
-                No external SSO providers registered yet. Click "Register Existing ESO App ID" or "Import IdP Metadata XML" to add your first federation.
-              </div>
-            `}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  lucide.createIcons();
-}
-
-// ── Modals & Actions for Identity Management ──
-
-function openCreateLocalUserModal() {
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
-        <h3 class="font-bold text-base">Create Local User</h3>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Username *</label>
-            <input id="newLocalUsername" type="text" placeholder="e.g. jdoe" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Password *</label>
-            <input id="newLocalPassword" type="password" placeholder="Password" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Full Name *</label>
-            <input id="newLocalFullName" type="text" placeholder="John Doe" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Email Address *</label>
-            <input id="newLocalEmail" type="email" placeholder="jdoe@company.local" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">System Role *</label>
-            <select id="newLocalRole" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2">
-              <option value="itsm_user">itsm_user (Support Agent / Fulfiller)</option>
-              <option value="itsm_admin">itsm_admin (Platform Administrator)</option>
-              <option value="itsm_read">itsm_read (Read-Only Viewer)</option>
-            </select>
-          </div>
-        </div>
-        <div class="flex justify-end space-x-2 pt-2">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitCreateLocalUser()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create User</button>
-        </div>
+      <h2 class="text-xl font-bold tracking-tight text-[var(--text-primary)]">Centralized Identity Management</h2>
+      <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+        Authentication, SSO federation, and user accounts are managed centrally by the host application's Identity Management service.
+      </p>
+      <div class="pt-2">
+        <a href="${imUrl}" target="_blank" class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow transition-colors">
+          <span>Open Host Identity Management</span>
+          <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+        </a>
       </div>
     </div>
   `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-function openEditLocalUserModal(id, username, fullName, email, role) {
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
-        <h3 class="font-bold text-base">Edit User: ${username}</h3>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Full Name</label>
-            <input id="editLocalFullName" type="text" value="${fullName}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Email Address</label>
-            <input id="editLocalEmail" type="email" value="${email}" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">System Role</label>
-            <select id="editLocalRole" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2">
-              <option value="itsm_user" ${role === 'itsm_user' ? 'selected' : ''}>itsm_user (Support Agent)</option>
-              <option value="itsm_admin" ${role === 'itsm_admin' || role === 'administrator' ? 'selected' : ''}>itsm_admin (Platform Administrator)</option>
-              <option value="itsm_read" ${role === 'itsm_read' ? 'selected' : ''}>itsm_read (Read-Only Viewer)</option>
-            </select>
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Reset Password (leave blank to keep current)</label>
-            <input id="editLocalPassword" type="password" placeholder="New Password" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-        </div>
-        <div class="flex justify-end space-x-2 pt-2">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitEditLocalUser(${id})" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Changes</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-function closeIdentityModal() {
-  document.getElementById('identityModal')?.remove();
-}
-
-async function submitCreateLocalUser() {
-  const username = document.getElementById('newLocalUsername')?.value.trim();
-  const password = document.getElementById('newLocalPassword')?.value;
-  const full_name = document.getElementById('newLocalFullName')?.value.trim();
-  const email = document.getElementById('newLocalEmail')?.value.trim();
-  const role = document.getElementById('newLocalRole')?.value;
-
-  if (!username || !password || !email || !full_name) {
-    alert("Please fill in all required fields.");
-    return;
-  }
-
-  const res = await fetch(`${API_BASE}/id/users`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, full_name, email, role })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to create user');
-    return;
-  }
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-async function submitEditLocalUser(id) {
-  const full_name = document.getElementById('editLocalFullName')?.value.trim();
-  const email = document.getElementById('editLocalEmail')?.value.trim();
-  const role = document.getElementById('editLocalRole')?.value;
-  const password = document.getElementById('editLocalPassword')?.value;
-
-  const body = { full_name, email, role };
-  if (password) body.password = password;
-
-  const res = await fetch(`${API_BASE}/id/users/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to update user');
-    return;
-  }
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-function openCreateCustomGroupModal() {
-  const allPerms = [
-    "ticket_create", "ticket_read", "ticket_read_own", "ticket_update", "ticket_assign", "ticket_resolve", "ticket_close", "ticket_delete",
-    "change_create", "change_read", "change_approve", "change_manage",
-    "kb_create", "kb_read", "kb_publish",
-    "applications_read", "projects_read",
-    "admin_applications", "admin_projects", "admin_groups", "admin_routing", "admin_slas", "admin_config", "admin_all",
-    "users_manage", "groups_manage", "sso_manage", "system_logs"
-  ];
-
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <h3 class="font-bold text-base">Create Custom Security Group</h3>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Group Name *</label>
-            <input id="newGroupName" type="text" placeholder="e.g. Incident Escalation Leads" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Description</label>
-            <input id="newGroupDesc" type="text" placeholder="Lead engineers with incident close and assignment permissions" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Select Custom Permissions *</label>
-            <div class="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto p-2 bg-[var(--bg-tertiary)] rounded-xl border border-[var(--border-color)]">
-              ${allPerms.map(p => `
-                <label class="flex items-center space-x-1.5 cursor-pointer">
-                  <input type="checkbox" name="customPerm" value="${p}" class="rounded text-purple-600 focus:ring-purple-500" />
-                  <span class="font-mono text-[10px]">${p}</span>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-        </div>
-        <div class="flex justify-end space-x-2 pt-2">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitCreateCustomGroup()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Create Group</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-async function submitCreateCustomGroup() {
-  const name = document.getElementById('newGroupName')?.value.trim();
-  const description = document.getElementById('newGroupDesc')?.value.trim();
-  const checkboxes = document.querySelectorAll('input[name="customPerm"]:checked');
-  const permissions = Array.from(checkboxes).map(c => c.value);
-
-  if (!name || permissions.length === 0) {
-    alert("Please enter a group name and select at least one permission.");
-    return;
-  }
-
-  const res = await fetch(`${API_BASE}/id/groups`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, permissions })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to create group');
-    return;
-  }
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-async function deleteCustomGroup(id) {
-  if (!confirm("Are you sure you want to deactivate this custom group?")) return;
-  const res = await fetch(`${API_BASE}/id/groups/${id}`, { method: 'DELETE' });
-  if (!res.ok) alert("Failed to delete group");
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-function openCreateADMappingModal() {
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
-        <h3 class="font-bold text-base">Add Active Directory Mapping</h3>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">AD Group Name or DN *</label>
-            <input id="adGroupName" type="text" placeholder="CN=ITSM-Admins,OU=Groups,DC=corp" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 font-mono" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Target ITSM Role</label>
-            <select id="adTargetRole" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2">
-              <option value="itsm_user">itsm_user (Support Agent)</option>
-              <option value="itsm_admin">itsm_admin (Administrator)</option>
-              <option value="itsm_read">itsm_read (Read-Only)</option>
-            </select>
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Description</label>
-            <input id="adDescription" type="text" placeholder="Corporate Active Directory group mapping" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-        </div>
-        <div class="flex justify-end space-x-2 pt-2">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitCreateADMapping()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Save Mapping</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-async function submitCreateADMapping() {
-  const ad_group_name = document.getElementById('adGroupName')?.value.trim();
-  const target_role = document.getElementById('adTargetRole')?.value;
-  const description = document.getElementById('adDescription')?.value.trim();
-
-  if (!ad_group_name) {
-    alert("AD Group Name is required.");
-    return;
-  }
-
-  const res = await fetch(`${API_BASE}/id/ad-mappings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ad_group_name, target_role, description })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to create AD mapping');
-    return;
-  }
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-async function deleteADMapping(id) {
-  if (!confirm("Are you sure you want to delete this mapping?")) return;
-  const res = await fetch(`${API_BASE}/id/ad-mappings/${id}`, { method: 'DELETE' });
-  if (!res.ok) alert("Failed to delete mapping");
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-async function testAdResolution() {
-  const val = document.getElementById('testAdGroupsInput')?.value.trim();
-  const resultDiv = document.getElementById('adResolutionResult');
-  if (!val || !resultDiv) return;
-
-  const groups = val.split(',').map(g => g.trim()).filter(Boolean);
-  const res = await fetch(`${API_BASE}/id/ad-resolve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ad_groups: groups })
-  });
-  if (res.ok) {
-    const data = await res.json();
-    resultDiv.classList.remove('hidden');
-    resultDiv.innerHTML = `
-      <div class="space-y-1.5">
-        <div class="font-bold text-purple-600">Effective Role: <span class="uppercase">${data.effective_role}</span></div>
-        <div>Matched AD Groups: <b>${data.matched_ad_groups.join(', ') || 'None'}</b></div>
-        <div>Resolved Custom Groups: <b>${data.custom_groups.join(', ') || 'None'}</b></div>
-        <div>Total Effective Permissions: <b>${data.permissions.length}</b> granted</div>
-      </div>
-    `;
-  }
-}
-
-function openImportIdPMetadataModal() {
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4">
-        <h3 class="font-bold text-base">Import IdP Metadata XML</h3>
-        <p class="text-xs text-slate-400">Paste your Enterprise Single Sign-On (ESO) or Identity Provider SAML 2.0 Metadata XML.</p>
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Provider Name *</label>
-            <input id="idpProviderName" type="text" placeholder="e.g. Enterprise SAML SSO" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">Federation Mode *</label>
-            <select id="idpB2bB2c" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2">
-              <option value="b2b">B2B (Enterprise / Partner)</option>
-              <option value="b2c">B2C (Customer / External)</option>
-            </select>
-          </div>
-          <div>
-            <label class="block font-semibold mb-1 text-slate-400">IdP Metadata XML Content *</label>
-            <textarea id="idpMetadataContent" rows="6" placeholder="<EntityDescriptor xmlns=... >...</EntityDescriptor>" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-3 font-mono text-[10px]"></textarea>
-          </div>
-        </div>
-        <div class="flex justify-end space-x-2 pt-2">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitImportIdPMetadata()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold">Import & Save</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-async function submitImportIdPMetadata() {
-  const name = document.getElementById('idpProviderName')?.value.trim();
-  const b2b_or_b2c = document.getElementById('idpB2bB2c')?.value;
-  const metadata_xml = document.getElementById('idpMetadataContent')?.value.trim();
-
-  if (!name || !metadata_xml) {
-    alert("Please provide both Provider Name and Metadata XML content.");
-    return;
-  }
-
-  const res = await fetch(`${API_BASE}/id/sso/import-idp-metadata`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, b2b_or_b2c, metadata_xml })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to import IdP metadata');
-    return;
-  }
-  alert("IdP Metadata imported successfully!");
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-function openRegisterESOAppIdModal() {
-  const modalHtml = `
-    <div id="identityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div class="bg-[var(--card-bg)] border border-purple-500/40 rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div class="flex items-center space-x-2">
-          <div class="w-8 h-8 rounded-xl bg-purple-900/60 border border-purple-500/50 flex items-center justify-center text-purple-300">
-            <i data-lucide="shield-check" class="w-4 h-4"></i>
-          </div>
-          <div>
-            <h3 class="font-bold text-base">Register Existing ESO App ID</h3>
-            <p class="text-xs text-slate-400">Pre-configure SAML/OIDC Service Provider with your corporate App ID.</p>
-          </div>
-        </div>
-
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block font-semibold mb-1 text-slate-300">ESO Application ID (App ID) *</label>
-            <input id="esoAppIdInput" type="text" placeholder="e.g. eso-app-nexus-itsm-prod or azure-app-client-123" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 font-mono text-purple-300" />
-            <span class="text-[10px] text-slate-500">Your existing App ID from Enterprise Sign-On or Azure App Registration.</span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block font-semibold mb-1 text-slate-300">Display Name</label>
-              <input id="esoNameInput" type="text" placeholder="Corporate SSO" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2" />
-            </div>
-            <div>
-              <label class="block font-semibold mb-1 text-slate-300">Provider Type</label>
-              <select id="esoProviderTypeInput" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2">
-                <option value="saml">SAML 2.0</option>
-                <option value="oidc">OpenID Connect (OIDC)</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label class="block font-semibold mb-1 text-slate-300">IdP Single Sign-On URL / Discovery URL</label>
-            <input id="esoSsoUrlInput" type="text" placeholder="https://eso.company.com/idp/sso or https://login.microsoftonline.com/..." class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-[11px]" />
-          </div>
-
-          <div class="grid grid-cols-3 gap-2">
-            <div>
-              <label class="block font-semibold mb-1 text-slate-400">Email Claim Path</label>
-              <input id="esoEmailPathInput" type="text" value="email" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-2.5 py-1.5 font-mono text-[11px]" />
-            </div>
-            <div>
-              <label class="block font-semibold mb-1 text-slate-400">Group Claim Path</label>
-              <input id="esoGroupPathInput" type="text" value="groups" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-2.5 py-1.5 font-mono text-[11px]" />
-            </div>
-            <div>
-              <label class="block font-semibold mb-1 text-slate-400">Default Role</label>
-              <select id="esoDefaultRoleInput" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl px-2 py-1.5 text-[11px]">
-                <option value="itsm_user">itsm_user</option>
-                <option value="itsm_admin">itsm_admin</option>
-                <option value="itsm_read">itsm_read</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label class="block font-semibold mb-1 text-slate-300">Role Mapping Rules (JSON: EnterpriseGroup -> Role)</label>
-            <textarea id="esoRoleRulesInput" rows="2" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2 font-mono text-[11px]">{"ITSM-Admins": "itsm_admin", "ITSM-Support": "itsm_user"}</textarea>
-          </div>
-
-          <div>
-            <label class="block font-semibold mb-1 text-slate-300">Assignment Group Mapping (JSON: Group -> [App Queue])</label>
-            <textarea id="esoAsgnRulesInput" rows="2" class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-xl p-2 font-mono text-[11px]">{"IT-ServiceDesk": ["Service Desk"], "DBA-Team": ["Database Support"]}</textarea>
-          </div>
-        </div>
-
-        <div class="flex justify-end space-x-2 pt-2 border-t border-[var(--border-color)]">
-          <button data-click="closeIdentityModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-[var(--bg-tertiary)]">Cancel</button>
-          <button data-click="submitRegisterESOAppId()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i>
-            <span>Register Provider</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-  lucide.createIcons();
-}
-
-async function submitRegisterESOAppId() {
-  const eso_app_id = document.getElementById('esoAppIdInput')?.value.trim();
-  const name = document.getElementById('esoNameInput')?.value.trim() || `ESO Provider (${eso_app_id})`;
-  const provider_type = document.getElementById('esoProviderTypeInput')?.value || 'saml';
-  const idp_sso_url = document.getElementById('esoSsoUrlInput')?.value.trim();
-  const claims_email_path = document.getElementById('esoEmailPathInput')?.value.trim() || 'email';
-  const claims_group_path = document.getElementById('esoGroupPathInput')?.value.trim() || 'groups';
-  const default_role = document.getElementById('esoDefaultRoleInput')?.value || 'itsm_user';
-
-  let role_mapping_rules = {};
-  let assignment_group_mapping_rules = {};
-  try {
-    const rawRole = document.getElementById('esoRoleRulesInput')?.value.trim();
-    if (rawRole) role_mapping_rules = JSON.parse(rawRole);
-  } catch (e) {
-    alert("Invalid JSON in Role Mapping Rules");
-    return;
-  }
-  try {
-    const rawAsgn = document.getElementById('esoAsgnRulesInput')?.value.trim();
-    if (rawAsgn) assignment_group_mapping_rules = JSON.parse(rawAsgn);
-  } catch (e) {
-    alert("Invalid JSON in Assignment Group Mapping");
-    return;
-  }
-
-  if (!eso_app_id) {
-    alert("ESO Application ID (App ID) is required.");
-    return;
-  }
-
-  const payload = {
-    eso_app_id,
-    name,
-    provider_type,
-    idp_sso_url,
-    claims_email_path,
-    claims_group_path,
-    default_role,
-    role_mapping_rules,
-    assignment_group_mapping_rules
-  };
-
-  const res = await fetch(`${API_BASE}/id/sso/register-eso`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  if (!res.ok) {
-    const err = await res.json();
-    alert(err.detail || 'Failed to register ESO App ID');
-    return;
-  }
-
-  const result = await res.json();
-  alert(result.message || 'ESO Provider registered successfully!');
-  closeIdentityModal();
-  renderIdentityManagementView(document.getElementById('mainApp'));
-}
-
-async function testClaimAndGroupMapping() {
-  const rawInput = document.getElementById('sampleClaimsInput')?.value.trim();
-  const outBox = document.getElementById('mappingSimulationOutput');
-  if (!rawInput || !outBox) return;
-
-  let claimsObj = {};
-  try {
-    claimsObj = JSON.parse(rawInput);
-  } catch (err) {
-    outBox.innerHTML = `<span class="text-rose-400">Error: Invalid JSON syntax in sample claims.</span>`;
-    return;
-  }
-
-  outBox.innerHTML = `<span class="text-purple-400 animate-pulse">Evaluating claims against application groups & roles...</span>`;
-
-  try {
-    const res = await fetch(`${API_BASE}/id/sso/test-claim-mapping`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claims: claimsObj })
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const p = data.preview || {};
-      const agList = (p.assignment_groups || []).map(g => typeof g === 'object' ? g.name : g).join(', ') || 'None';
-      const cgList = (p.custom_groups || []).join(', ') || 'None';
-
-      outBox.innerHTML = `
-        <div class="space-y-1">
-          <div>Email: <span class="text-emerald-300 font-bold">${p.extracted_email || '—'}</span></div>
-          <div>Name: <span class="text-white">${p.extracted_name || '—'}</span></div>
-          <div>Effective Role: <span class="text-purple-300 font-bold uppercase">${p.effective_role}</span></div>
-          <div>ITSM Queues (App Groups): <span class="text-amber-300 font-semibold">${agList}</span></div>
-          <div>Custom Groups: <span class="text-blue-300">${cgList}</span></div>
-          <div>Permissions: <span class="text-slate-400">${(p.permissions || []).length} permissions active</span></div>
-        </div>
-      `;
-    } else {
-      const err = await res.json();
-      outBox.innerHTML = `<span class="text-rose-400">Mapping error: ${err.detail || 'Failed'}</span>`;
-    }
-  } catch (e) {
-    outBox.innerHTML = `<span class="text-rose-400">Network error: ${e.message}</span>`;
-  }
+  safeCreateIcons();
 }
 
 // ============================================================================

@@ -17,9 +17,70 @@ from sqlalchemy import or_
 
 from backend.database import engine, SessionLocal, get_db, migrate_legacy_schema, Base
 from backend.models import (
-    User, CustomGroup, UserCustomGroup, ADGroupMapping, SSOProviderConfig,
+    User, CustomGroup, UserCustomGroup, ADGroupMapping,
     AssignmentGroup, GroupMember
 )
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
+import datetime
+
+class SSOProviderConfig(Base):
+    __tablename__ = "sso_provider_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    provider_type = Column(String(20), default="saml", nullable=False)
+    b2b_or_b2c = Column(String(10), default="b2b", nullable=False)
+    entity_id = Column(String(255), nullable=True)
+    sso_url = Column(String(500), nullable=True)
+    client_id = Column(String(255), nullable=True)
+    client_secret = Column(String(255), nullable=True)
+    discovery_url = Column(String(500), nullable=True)
+    metadata_xml = Column(Text, nullable=True)
+    certificate = Column(Text, nullable=True)
+    eso_app_id = Column(String(255), nullable=True)
+    claims_email_path = Column(String(100), default="email", nullable=True)
+    claims_group_path = Column(String(100), default="groups", nullable=True)
+    claims_name_path = Column(String(100), default="name", nullable=True)
+    default_role = Column(String(50), default="itsm_user", nullable=False)
+    auto_provision = Column(Boolean, default=True, nullable=False)
+    role_mapping_rules = Column(Text, default="{}", nullable=True)
+    custom_group_mapping_rules = Column(Text, default="{}", nullable=True)
+    assignment_group_mapping_rules = Column(Text, default="{}", nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        rmr = {}
+        cgmr = {}
+        agmr = {}
+        try:
+            rmr = json.loads(self.role_mapping_rules or "{}") if isinstance(self.role_mapping_rules, str) else (self.role_mapping_rules or {})
+            cgmr = json.loads(self.custom_group_mapping_rules or "{}") if isinstance(self.custom_group_mapping_rules, str) else (self.custom_group_mapping_rules or {})
+            agmr = json.loads(self.assignment_group_mapping_rules or "{}") if isinstance(self.assignment_group_mapping_rules, str) else (self.assignment_group_mapping_rules or {})
+        except Exception:
+            pass
+        return {
+            "id": self.id,
+            "name": self.name,
+            "provider_type": self.provider_type,
+            "b2b_or_b2c": self.b2b_or_b2c,
+            "entity_id": self.entity_id,
+            "sso_url": self.sso_url,
+            "client_id": self.client_id,
+            "discovery_url": self.discovery_url,
+            "eso_app_id": self.eso_app_id,
+            "claims_email_path": self.claims_email_path,
+            "claims_group_path": self.claims_group_path,
+            "claims_name_path": self.claims_name_path,
+            "default_role": self.default_role,
+            "auto_provision": self.auto_provision,
+            "role_mapping_rules": rmr,
+            "custom_group_mapping_rules": cgmr,
+            "assignment_group_mapping_rules": agmr,
+            "has_metadata_xml": bool(self.metadata_xml),
+            "enabled": self.enabled,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
 from identity_service.security import (
     hash_password, verify_password, create_access_token, decode_access_token,
     ALL_PERMISSIONS, ROLE_PERMISSIONS, get_role_permissions

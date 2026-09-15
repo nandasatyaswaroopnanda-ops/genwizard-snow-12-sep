@@ -127,12 +127,6 @@ app.include_router(attachments.router)
 app.include_router(notifications.router)
 app.include_router(exports.router)
 
-# Mount Identity Management Service sub-app
-try:
-    from identity_service.main import app as identity_app
-    app.mount("/api/id", identity_app)
-except Exception as _e:
-    pass
 
 # Dynamic log level & Consul routes on /api/admin/
 from backend.security import require_admin
@@ -325,15 +319,6 @@ def serve_index():
         return FileResponse(index_path)
     return {"message": "GenWizard Support Portal API is running. Build frontend/index.html to view UI."}
 
-@app.get("/sso-redirect.html")
-@app.get("/sso")
-@app.get("/itsm/sso-redirect.html")
-@app.get("/itsm/sso")
-def serve_sso_redirect():
-    sso_path = os.path.join(frontend_dir, "sso-redirect.html")
-    if os.path.exists(sso_path):
-        return FileResponse(sso_path)
-    return RedirectResponse(url="/")
 
 # ─────────────────────────────────────────────────────────────
 # Swagger & OpenAPI Documentation for Ticket Automation

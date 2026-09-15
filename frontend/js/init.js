@@ -15,6 +15,79 @@
   document.head.appendChild(b);
 })();
 
+// 1.5. Early Authentication Gate (Redirects unauthenticated direct /itsm access to Identity Management Sign-In)
+(function authGate() {
+  try {
+    if (typeof window === 'undefined' || !window.location) return;
+    var path = window.location.pathname || '';
+    // 1. Check URL parameters and hash for any tokens or SSO identity
+    var sp = new URLSearchParams(window.location.search || '');
+    var hash = window.location.hash || '';
+    var hp = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
+
+    var urlToken = sp.get('apiToken') || sp.get('apitoken') || sp.get('api_token') || sp.get('api-token')
+      || sp.get('short_token') || sp.get('shortToken') || sp.get('short-token') || sp.get('SHORT_TOKEN')
+      || sp.get('atr-token') || sp.get('atr_token') || sp.get('im-token') || sp.get('im_token')
+      || sp.get('token') || sp.get('access_token') || sp.get('auth_token') || sp.get('jwt') || sp.get('id_token')
+      || hp.get('token') || hp.get('access_token') || hp.get('apiToken') || hp.get('short_token');
+
+    var urlUser = sp.get('username') || sp.get('user') || sp.get('sso_user') || sp.get('sso_username')
+      || sp.get('im_user') || sp.get('login') || hp.get('username') || hp.get('user');
+
+    if (urlToken) {
+      try {
+        localStorage.setItem('auth_token', urlToken);
+        localStorage.setItem('apiToken', urlToken);
+        localStorage.setItem('short_token', urlToken);
+      } catch (_) {}
+      return; // Authenticated via query/hash token
+    }
+    if (urlUser) {
+      return; // Authenticated via query/hash user
+    }
+
+    // 2. Check cookies for active session / token
+    if (typeof document !== 'undefined' && document.cookie) {
+      var authCookieRegex = /(?:^|;\s*)(?:apiToken|apitoken|api_token|api-token|atr-token|atr_token|im-token|im_token|short_token|shortToken|short-token|SHORT_TOKEN|auth_token|authToken|access_token|accessToken|token|jwt|Authorization|SESSION|sessionId|JSESSIONID|sso_username|sso_user|im_user)=([^;]+)/i;
+      var cm = document.cookie.match(authCookieRegex);
+      if (cm && cm[1] && cm[1].trim()) {
+        return; // Authenticated via cookie
+      }
+    }
+
+    // 3. Check storage for active auth tokens or SSO credentials
+    if (typeof localStorage !== 'undefined') {
+      var storageToken = localStorage.getItem('auth_token') || localStorage.getItem('access_token')
+        || localStorage.getItem('apiToken') || localStorage.getItem('short_token')
+        || localStorage.getItem('im-token') || localStorage.getItem('atr-token')
+        || localStorage.getItem('sso_username') || localStorage.getItem('sso_user')
+        || (typeof sessionStorage !== 'undefined' && (sessionStorage.getItem('auth_token') || sessionStorage.getItem('apiToken') || sessionStorage.getItem('sso_username')));
+      if (storageToken && String(storageToken).trim().length > 0) {
+        return; // Authenticated via storage
+      }
+    }
+
+    // 4. If neither URL, cookie, nor token in storage exists:
+    // Clean up any stale local user state so it never displays an unauthorized admin session
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('current_user');
+      localStorage.removeItem('nexus_user_id');
+    }
+
+    // Redirect to existing application's Identity Management Sign-In preserving deep link target
+    var imBase = (typeof window !== 'undefined' && (window.__IM_SIGNIN_URL || window.__EXISTING_APP_IM_URL))
+      || (typeof document !== 'undefined' && document.querySelector('meta[name="im-signin-url"]') && document.querySelector('meta[name="im-signin-url"]').getAttribute('content'))
+      || (typeof localStorage !== 'undefined' && localStorage.getItem('im_signin_url'))
+      || '/identity-management/signin';
+    var currentUrl = window.location.href;
+    var sep = imBase.indexOf('?') !== -1 ? '&' : '?';
+    var signInUrl = imBase + sep + 'redirect_uri=' + encodeURIComponent(currentUrl);
+    window.location.replace(signInUrl);
+  } catch (err) {
+    console.warn('Auth gate warning:', err);
+  }
+})();
+
 // 2. Early SSO User Detection & Immediate Header Population (prevents wrong user flash)
 (function initEarlyUserInfo() {
   try {
@@ -43,7 +116,7 @@
 
     // Check token claims if present
     if (!u && typeof localStorage !== 'undefined') {
-      var tok = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken');
+      var tok = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || localStorage.getItem('apiToken') || localStorage.getItem('short_token');
       if (tok && tok.indexOf('.') !== -1) {
         try {
           var payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -55,6 +128,17 @@
             };
           }
         } catch (_) {}
+      } else if (tok) {
+        // Check local bypass prefixes
+        var lowTok = tok.toLowerCase();
+        var prefixes = ['loc:', 'loc-', 'local:', 'local-', 'short:', 'short-', 'bypass:', 'bypass-'];
+        for (var pi = 0; pi < prefixes.length; pi++) {
+          if (lowTok.indexOf(prefixes[pi]) === 0) {
+            var lpUname = tok.substring(prefixes[pi].length).trim();
+            if (lpUname) u = { username: lpUname };
+            break;
+          }
+        }
       }
     }
 
@@ -65,7 +149,7 @@
     }
 
     if (!u) {
-      var hasExt = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken')));
+      var hasExt = (typeof localStorage !== 'undefined' && (!!localStorage.getItem('auth_token') || !!localStorage.getItem('apiToken') || !!localStorage.getItem('short_token')));
       var raw = localStorage.getItem('sso_user') || localStorage.getItem('user') || localStorage.getItem('currentUser') || localStorage.getItem('userInfo') || (!hasExt ? localStorage.getItem('current_user') : null);
       if (raw) {
         try { u = JSON.parse(raw); } catch (_) {

@@ -3,22 +3,23 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import User
-from backend.security import get_current_user as get_authenticated_user, keycloak_enabled, require_admin
+from backend.security import get_current_user as get_authenticated_user, require_admin
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.get("/config")
 def get_auth_config():
-    """Public SPA configuration; does not expose secrets."""
-    issuer = os.getenv("KEYCLOAK_ISSUER", "").rstrip("/")
-    realm = issuer.rsplit("/realms/", 1)[-1] if "/realms/" in issuer else ""
-    base_url = issuer.rsplit("/realms/", 1)[0] if realm else ""
-    return {"enabled": keycloak_enabled(), "url": base_url, "realm": realm, "clientId": os.getenv("KEYCLOAK_CLIENT_ID", "nexus-itsm")}
+    """Public auth configuration; provides existing application IM sign-in URL."""
+    im_signin = os.getenv("IM_SIGNIN_URL") or os.getenv("IDENTITY_MANAGEMENT_SIGNIN_URL") or os.getenv("EXISTING_APP_IM_URL") or "/identity-management/signin"
+    return {
+        "im_signin_url": im_signin,
+        "auth_type": "external_im"
+    }
 
 @router.get("/users")
 def get_available_users(db: Session = Depends(get_db), current_user: User = Depends(get_authenticated_user)):
     """Returns list of users for switching personas in the UI."""
-    from backend.security import keycloak_enabled, LOCAL_PERSONAS, _ensure_local_persona
+    from backend.security import LOCAL_PERSONAS, _ensure_local_persona
     # If the user is an SSO / external user, strictly return ONLY the authenticated SSO user.
     # The local admin account and local personas must NEVER be mixed into or exposed in an SSO user's session.
     if not current_user.is_local or current_user.username.lower() != "admin":
@@ -40,8 +41,7 @@ def get_current_user(
     db: Session = Depends(get_db)
 ):
     """
-    Returns the authenticated Keycloak user, or the seeded demo administrator
-    when SSO has not been configured for local development.
+    Returns the authenticated user information, project boundaries, and role.
     """
     # Add user's assignment group IDs
     group_ids = [m.group_id for m in current_user.memberships]
